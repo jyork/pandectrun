@@ -6,6 +6,8 @@
 
 PandectRun is a production-oriented workflow orchestration platform for building reliable workflows that combine deterministic application logic, external services, and AI models.
 
+The name **PandectRun** comes from *pandect*: a comprehensive treatise or compendium covering a subject as a whole. The name reflects the project's goal of bringing the many pieces of an AI-assisted workflow—deterministic logic, APIs, models, state, reliability, and observability—together into one coherent execution system.
+
 The goal is not to build another AI chatbot. PandectRun explores the infrastructure required to run AI-assisted workflows as dependable software: explicit execution graphs, retries, persistence, idempotency, observability, structured model output, and auditable execution state.
 
 ## Project Goals
