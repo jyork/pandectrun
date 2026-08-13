@@ -2,7 +2,31 @@ package engine
 
 import "fmt"
 
-// ValidateWorkflow checks structural invariants required by the scheduler.
+// ValidateWorkflow verifies that a workflow definition is structurally valid
+// before the scheduler attempts to execute it.
+//
+// Validation establishes the invariants the execution engine relies on:
+//   - the workflow has a non-empty ID and a positive version;
+//   - the workflow contains at least one step;
+//   - every step has a non-empty ID and type;
+//   - step IDs are unique within the workflow;
+//   - every dependency references another step in the same workflow;
+//   - a step cannot depend on itself; and
+//   - the dependency graph is acyclic.
+//
+// The final check treats the workflow as a directed acyclic graph (DAG) and
+// performs a three-color depth-first traversal. Encountering a step that is
+// already in the current traversal path identifies a dependency cycle. Cyclic
+// workflows are rejected because no valid execution order can satisfy their
+// dependencies.
+//
+// ValidateWorkflow validates only workflow structure. It does not verify that
+// a step type is registered with a scheduler, interpret step-specific Config,
+// validate retry policy values, or perform any external I/O. Those checks
+// belong to the components that own those concerns.
+//
+// A nil return means the definition is safe for the scheduler to reason about;
+// it does not guarantee that execution will succeed.
 func ValidateWorkflow(def WorkflowDefinition) error {
 	if def.ID == "" {
 		return fmt.Errorf("workflow id is required")
