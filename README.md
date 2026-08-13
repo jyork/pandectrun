@@ -138,14 +138,30 @@ Example execution request:
 
 ## Technology Direction
 
-- **Application:** Go, REST APIs, gRPC where appropriate
+- **Application:** Go 1.26, REST APIs, gRPC where appropriate
 - **Persistence:** PostgreSQL; Redis for caching and coordination
 - **Messaging:** Kafka as distributed/event-driven execution is introduced
 - **AI:** provider abstraction, structured output, retries, timeouts, telemetry
 - **Observability:** OpenTelemetry, Prometheus, Grafana, structured logging
 - **Deployment:** Docker, Kubernetes, AWS, Terraform, GitHub Actions
 
+PandectRun targets **Go 1.26**. Older Go versions are not supported; the project will use the current language and standard-library capabilities available at this baseline rather than carrying compatibility code for earlier releases.
+
 Local development should remain lightweight even as the target production architecture moves toward Kubernetes.
+
+## Dependencies
+
+PandectRun aims to keep its dependency surface small. The standard library is preferred where it provides a clear, maintainable solution. External dependencies are added deliberately when they provide substantial production behavior that would otherwise require significant custom infrastructure code or recreate well-understood edge cases.
+
+### Resile
+
+[`github.com/cinar/resile`](https://github.com/cinar/resile) provides the retry and execution-resilience primitives used by PandectRun. The initial integration will focus on retry behavior such as bounded attempts, exponential backoff with jitter, context cancellation and deadlines, terminal/fatal error signaling, and observability hooks.
+
+PandectRun will keep its own retry-policy abstraction at the workflow-engine boundary rather than exposing Resile-specific configuration in persisted workflow definitions. This keeps workflow semantics owned by PandectRun while allowing the underlying resilience implementation to evolve independently.
+
+More advanced Resile features—including circuit breakers, adaptive retries, bulkheads, hedged requests, rate limiting, and fallback strategies—will be introduced only when a concrete workflow or operational requirement justifies them.
+
+The module is pinned in `go.mod`; dependency upgrades should be intentional and reviewed like other runtime behavior changes.
 
 ## Execution Model
 
@@ -166,7 +182,9 @@ A step reads the context it depends on, performs its operation, produces structu
 
 ## Reliability
 
-External APIs and AI providers are treated as unreliable dependencies. The orchestration layer will own configurable retries, exponential backoff, step-level timeouts, idempotency, cancellation, retryable versus terminal errors, persisted execution state, and execution event history.
+External APIs and AI providers are treated as unreliable dependencies. PandectRun owns the workflow-level semantics for retryable versus terminal failures, persisted execution state, idempotency, cancellation, and execution history. Resile provides the underlying retry/resilience mechanics, including backoff, jitter, attempt limits, context-aware cancellation, and related execution policies.
+
+This separation keeps dependency-specific behavior out of persisted workflow definitions and prevents the orchestrator API from becoming coupled to a particular retry library.
 
 ## Observability
 
@@ -211,8 +229,9 @@ This is a target structure, not a description of the current repository contents
 - PostgreSQL persistence
 
 ### Phase 2 — Production Behavior
-- Retry/backoff, timeouts, and idempotency
-- Cancellation and execution event history
+- Resile-backed retry/backoff and timeout policies
+- Idempotency and cancellation
+- Execution event history
 - Redis integration
 - Structured logging
 
