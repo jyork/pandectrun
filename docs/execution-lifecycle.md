@@ -51,7 +51,7 @@ stateDiagram-v2
     cancelled --> [*]
 ```
 
-`skipped` and `cancelled` are intentionally distinct. A skipped step is omitted because of workflow semantics; a cancelled step would otherwise have run or completed but execution was terminated.
+`skipped` and `cancelled` are intentionally distinct. A skipped step is omitted because of workflow semantics; a cancelled step did not run or complete because execution cancellation took effect.
 
 ## Retry sequence
 
