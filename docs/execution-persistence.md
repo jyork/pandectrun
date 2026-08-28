@@ -36,7 +36,7 @@ A failed execution must persist its `ExecutionError` so `GetExecution` can repor
 Error *ExecutionError `json:"error,omitempty"`
 ```
 
-Execution-level idempotency is deliberately not part of the initial persistence model. Idempotent execution creation should be designed with the REST/API layer, where the uniqueness scope and request semantics can be defined explicitly rather than inferred from a generic `IdempotencyKey` field.
+Execution-creation idempotency is deliberately deferred until the REST/API layer is designed, where its uniqueness scope and request semantics can be defined explicitly.
 
 ### StepExecution
 
@@ -316,7 +316,7 @@ Scheduler tests should execute a workflow through the repository and assert the 
 
 This design deliberately does not yet solve:
 
-- execution-creation idempotency and API-level idempotency-key semantics;
+- execution-creation idempotency and API-level request semantics;
 - PostgreSQL table and index design;
 - distributed ownership or leases;
 - cross-process cancellation notification;
