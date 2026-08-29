@@ -12,6 +12,7 @@ The design intentionally focuses on execution state, attempts, events, cancellat
 - Make important state transitions and their audit events atomic.
 - Treat cancellation as a first-class, best-effort operation.
 - Preserve why an execution was started and its relationship to other executions.
+- Support filtered enumeration of executions for operational and API use.
 - Make the in-memory repository concurrency-safe so repository semantics do not depend on the current sequential scheduler.
 
 ## Runtime entities
@@ -185,6 +186,39 @@ Not every possible future event needs to be implemented immediately. The importa
 
 Events are append-only and ordered within an execution.
 
+## Execution queries
+
+Point lookup by `ExecutionID` is not sufficient for operational use. The execution repository should also support filtered enumeration so callers can answer questions such as:
+
+- which executions are currently running;
+- which executions are active, including `running` and `cancel_requested`;
+- which executions of a particular workflow failed;
+- which executions exist for a particular workflow regardless of status.
+
+The initial query contract should remain deliberately small:
+
+```go
+type ExecutionQuery struct {
+    WorkflowID string
+    Status     []ExecutionStatus
+    Limit      int
+}
+```
+
+`WorkflowID` is optional; an empty value means executions across all workflows. `Status` is also optional; an empty slice means all statuses. Multiple statuses are supported because callers commonly need sets such as `running` plus `cancel_requested` rather than a single status.
+
+`Limit` bounds the number of returned executions. Cursor or continuation semantics are deferred until the REST/API and PostgreSQL query requirements are concrete. The repository should not expose unbounded operational listing as its long-term contract.
+
+The corresponding repository operation is:
+
+```go
+ListExecutions(context.Context, ExecutionQuery) ([]Execution, error)
+```
+
+This operation is intentionally named `ListExecutions` rather than `SearchExecutions`: the initial contract is filtered enumeration, not arbitrary or full-text search.
+
+Workflow-definition discovery is a separate concern. `ExecutionRepository` should not be responsible for listing or searching `WorkflowDefinition` objects. A future workflow-definition persistence layer may introduce a separate `WorkflowRepository` when workflow definitions themselves become persisted entities.
+
 ## Repository boundary
 
 The scheduler depends on an execution repository interface rather than directly owning persistence or depending on an in-memory map or PostgreSQL.
@@ -199,6 +233,7 @@ A representative interface is:
 type ExecutionRepository interface {
     CreateExecution(context.Context, NewExecution) (ExecutionID, error)
     GetExecution(context.Context, ExecutionID) (Execution, error)
+    ListExecutions(context.Context, ExecutionQuery) ([]Execution, error)
 
     StartExecution(context.Context, ExecutionID) error
     CompleteExecution(context.Context, ExecutionID, json.RawMessage) error
@@ -285,7 +320,7 @@ The implementation should satisfy the repository interface explicitly:
 var _ ExecutionRepository = (*MemoryExecutionRepository)(nil)
 ```
 
-Tests should exercise repository semantics, not merely map storage. Important cases include legal and illegal state transitions, repository-generated identities, repository-owned lifecycle timestamps, immutable completed output, retry attempt history and explicit attempt status, event ordering, persisted execution errors, cancellation idempotency, and races represented by transitions from `cancel_requested` to each permitted terminal state.
+Tests should exercise repository semantics, not merely map storage. Important cases include legal and illegal state transitions, repository-generated identities, repository-owned lifecycle timestamps, immutable completed output, retry attempt history and explicit attempt status, event ordering, persisted execution errors, cancellation idempotency, filtered execution listing by workflow and status, and races represented by transitions from `cancel_requested` to each permitted terminal state.
 
 ## Scheduler integration
 
@@ -317,6 +352,9 @@ Scheduler tests should execute a workflow through the repository and assert the 
 This design deliberately does not yet solve:
 
 - execution-creation idempotency and API-level request semantics;
+- workflow-definition persistence and discovery;
+- cursor or continuation-based execution pagination;
+- richer execution filters such as creation time, provenance, and relations;
 - PostgreSQL table and index design;
 - distributed ownership or leases;
 - cross-process cancellation notification;
