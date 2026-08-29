@@ -5,14 +5,19 @@ import (
 	"time"
 )
 
+type ExecutionID string
+type StepExecutionID string
+type StepAttemptID string
+
 type ExecutionStatus string
 
 const (
-	ExecutionPending   ExecutionStatus = "pending"
-	ExecutionRunning   ExecutionStatus = "running"
-	ExecutionCompleted ExecutionStatus = "completed"
-	ExecutionFailed    ExecutionStatus = "failed"
-	ExecutionCancelled ExecutionStatus = "cancelled"
+	ExecutionPending         ExecutionStatus = "pending"
+	ExecutionRunning         ExecutionStatus = "running"
+	ExecutionCancelRequested ExecutionStatus = "cancel_requested"
+	ExecutionCompleted       ExecutionStatus = "completed"
+	ExecutionFailed          ExecutionStatus = "failed"
+	ExecutionCancelled       ExecutionStatus = "cancelled"
 )
 
 type StepStatus string
@@ -23,6 +28,16 @@ const (
 	StepCompleted StepStatus = "completed"
 	StepFailed    StepStatus = "failed"
 	StepSkipped   StepStatus = "skipped"
+	StepCancelled StepStatus = "cancelled"
+)
+
+type StepAttemptStatus string
+
+const (
+	StepAttemptRunning   StepAttemptStatus = "running"
+	StepAttemptCompleted StepAttemptStatus = "completed"
+	StepAttemptFailed    StepAttemptStatus = "failed"
+	StepAttemptCancelled StepAttemptStatus = "cancelled"
 )
 
 type ErrorKind string
@@ -60,22 +75,44 @@ type StepDefinition struct {
 	Retry     RetryPolicy     `json:"retry,omitempty"`
 }
 
+type NewExecution struct {
+	WorkflowID      string
+	WorkflowVersion int
+	Input           json.RawMessage
+}
+
+type NewStepExecution struct {
+	ExecutionID ExecutionID
+	StepID      string
+}
+
+type NewStepAttempt struct {
+	StepExecutionID StepExecutionID
+	Attempt         uint
+}
+
+type ExecutionQuery struct {
+	WorkflowID string
+	Status     []ExecutionStatus
+	Limit      int
+}
+
 type Execution struct {
-	ID              string          `json:"id"`
+	ID              ExecutionID     `json:"id"`
 	WorkflowID      string          `json:"workflow_id"`
 	WorkflowVersion int             `json:"workflow_version"`
 	Status          ExecutionStatus `json:"status"`
 	Input           json.RawMessage `json:"input"`
 	Output          json.RawMessage `json:"output,omitempty"`
-	IdempotencyKey  string          `json:"idempotency_key,omitempty"`
+	Error           *ExecutionError `json:"error,omitempty"`
 	CreatedAt       time.Time       `json:"created_at"`
 	StartedAt       *time.Time      `json:"started_at,omitempty"`
 	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
 }
 
 type StepExecution struct {
-	ID          string          `json:"id"`
-	ExecutionID string          `json:"execution_id"`
+	ID          StepExecutionID `json:"id"`
+	ExecutionID ExecutionID     `json:"execution_id"`
 	StepID      string          `json:"step_id"`
 	Status      StepStatus      `json:"status"`
 	Output      json.RawMessage `json:"output,omitempty"`
@@ -85,12 +122,13 @@ type StepExecution struct {
 }
 
 type StepAttempt struct {
-	ID              string          `json:"id"`
-	StepExecutionID string          `json:"step_execution_id"`
-	Attempt         uint            `json:"attempt"`
-	StartedAt       time.Time       `json:"started_at"`
-	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
-	Error           *ExecutionError `json:"error,omitempty"`
+	ID              StepAttemptID     `json:"id"`
+	StepExecutionID StepExecutionID   `json:"step_execution_id"`
+	Attempt         uint              `json:"attempt"`
+	Status          StepAttemptStatus `json:"status"`
+	StartedAt       time.Time         `json:"started_at"`
+	CompletedAt     *time.Time        `json:"completed_at,omitempty"`
+	Error           *ExecutionError   `json:"error,omitempty"`
 }
 
 type WorkflowContext struct {
