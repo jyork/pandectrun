@@ -7,7 +7,7 @@ import (
 )
 
 type StepInput struct {
-	ExecutionID string
+	ExecutionID ExecutionID
 	Step        StepDefinition
 	Context     WorkflowContext
 }
@@ -18,7 +18,8 @@ type StepResult struct {
 
 // Step executes one workflow step. Implementations receive constructed
 // dependencies when they are registered; workflow context is data, not a
-// service locator.
+// service locator. Implementations should honor context cancellation and return
+// promptly when the underlying operation can be cancelled.
 type Step interface {
 	Execute(context.Context, StepInput) (StepResult, error)
 }
