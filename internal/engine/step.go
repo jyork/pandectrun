@@ -46,8 +46,8 @@ func (e *PermanentError) Unwrap() error {
 // Permanent wraps err so the scheduler treats it as non-retryable.
 // A nil error remains nil.
 func Permanent(err error) error {
-	if err == nil {
-		return nil
+	if err == nil || IsPermanent(err) {
+		return err
 	}
 	return &PermanentError{Err: err}
 }
