@@ -12,7 +12,7 @@ var (
 	ErrInvalidTransition = errors.New("invalid lifecycle transition")
 )
 
-type ExecutionEventType string
+// ExecutionEventType identifies a chronological lifecycle event emitted while an execution runs.\ntype ExecutionEventType string
 
 const (
 	EventExecutionCreated         ExecutionEventType = "execution.created"
@@ -29,7 +29,7 @@ const (
 	EventStepCancelled            ExecutionEventType = "step.cancelled"
 )
 
-type ExecutionEvent struct {
+// ExecutionEvent records a durable point in an execution's lifecycle history.\n// StepExecutionID and StepAttemptID are populated only for events at those scopes.\ntype ExecutionEvent struct {
 	ExecutionID     ExecutionID        `json:"execution_id"`
 	Type            ExecutionEventType `json:"type"`
 	StepExecutionID StepExecutionID    `json:"step_execution_id,omitempty"`
@@ -37,7 +37,7 @@ type ExecutionEvent struct {
 	CreatedAt       time.Time          `json:"created_at"`
 }
 
-type ExecutionRepository interface {
+// ExecutionRepository persists execution, step, attempt, and event state through\n// lifecycle-oriented operations. Implementations own runtime IDs and lifecycle\n// timestamps and must keep each state transition and its corresponding event atomic.\ntype ExecutionRepository interface {
 	CreateExecution(context.Context, NewExecution) (ExecutionID, error)
 	GetExecution(context.Context, ExecutionID) (Execution, error)
 	ListExecutions(context.Context, ExecutionQuery) ([]Execution, error)
