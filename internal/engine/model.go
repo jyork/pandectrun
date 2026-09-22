@@ -9,7 +9,7 @@ type ExecutionID string
 type StepExecutionID string
 type StepAttemptID string
 
-type ExecutionStatus string
+// ExecutionStatus describes the lifecycle state of a workflow execution.\ntype ExecutionStatus string
 
 const (
 	ExecutionPending         ExecutionStatus = "pending"
@@ -20,7 +20,7 @@ const (
 	ExecutionCancelled       ExecutionStatus = "cancelled"
 )
 
-type StepStatus string
+// StepStatus describes the lifecycle state of a logical step within an execution.\ntype StepStatus string
 
 const (
 	StepPending   StepStatus = "pending"
@@ -31,7 +31,7 @@ const (
 	StepCancelled StepStatus = "cancelled"
 )
 
-type StepAttemptStatus string
+// StepAttemptStatus describes the outcome or current state of one step attempt.\ntype StepAttemptStatus string
 
 const (
 	StepAttemptRunning   StepAttemptStatus = "running"
@@ -40,7 +40,7 @@ const (
 	StepAttemptCancelled StepAttemptStatus = "cancelled"
 )
 
-type ErrorKind string
+// ErrorKind classifies an execution error for orchestration decisions such as retry or cancellation.\ntype ErrorKind string
 
 const (
 	ErrorRetryable ErrorKind = "retryable"
@@ -48,26 +48,26 @@ const (
 	ErrorCancelled ErrorKind = "cancelled"
 )
 
-type ExecutionError struct {
+// ExecutionError is the durable, structured representation of an execution or step failure.\ntype ExecutionError struct {
 	Kind    ErrorKind `json:"kind"`
 	Code    string    `json:"code,omitempty"`
 	Message string    `json:"message"`
 }
 
-type RetryPolicy struct {
+// RetryPolicy defines the engine-owned retry limits and backoff parameters for a step.\ntype RetryPolicy struct {
 	MaxAttempts uint          `json:"max_attempts,omitempty"`
 	BaseDelay   time.Duration `json:"base_delay,omitempty"`
 	MaxDelay    time.Duration `json:"max_delay,omitempty"`
 }
 
-type WorkflowDefinition struct {
+// WorkflowDefinition is an immutable, versioned description of a workflow DAG.\ntype WorkflowDefinition struct {
 	ID      string           `json:"id"`
 	Name    string           `json:"name"`
 	Version int              `json:"version"`
 	Steps   []StepDefinition `json:"steps"`
 }
 
-type StepDefinition struct {
+// StepDefinition describes one logical node in a workflow DAG and its implementation-specific configuration.\ntype StepDefinition struct {
 	ID        string          `json:"id"`
 	Type      string          `json:"type"`
 	DependsOn []string        `json:"depends_on,omitempty"`
@@ -75,29 +75,29 @@ type StepDefinition struct {
 	Retry     RetryPolicy     `json:"retry,omitempty"`
 }
 
-type NewExecution struct {
+// NewExecution contains caller-supplied data required to create an Execution.\n// The repository assigns the execution ID, initial status, and lifecycle timestamps.\ntype NewExecution struct {
 	WorkflowID      string
 	WorkflowVersion int
 	Input           json.RawMessage
 }
 
-type NewStepExecution struct {
+// NewStepExecution contains caller-supplied data required to create a StepExecution.\n// The repository assigns the step-execution ID and initial lifecycle state.\ntype NewStepExecution struct {
 	ExecutionID ExecutionID
 	StepID      string
 }
 
-type NewStepAttempt struct {
+// NewStepAttempt contains caller-supplied data required to create one attempt for a StepExecution.\n// Attempt is the one-based ordinal of the attempt within that step execution.\ntype NewStepAttempt struct {
 	StepExecutionID StepExecutionID
 	Attempt         uint
 }
 
-type ExecutionQuery struct {
+// ExecutionQuery filters persisted executions. Empty WorkflowID and Status values\n// match all workflows and statuses; Limit <= 0 leaves the result unbounded.\ntype ExecutionQuery struct {
 	WorkflowID string
 	Status     []ExecutionStatus
 	Limit      int
 }
 
-type Execution struct {
+// Execution is the durable runtime record for one invocation of a workflow definition.\ntype Execution struct {
 	ID              ExecutionID     `json:"id"`
 	WorkflowID      string          `json:"workflow_id"`
 	WorkflowVersion int             `json:"workflow_version"`
@@ -110,7 +110,7 @@ type Execution struct {
 	CompletedAt     *time.Time      `json:"completed_at,omitempty"`
 }
 
-type StepExecution struct {
+// StepExecution is the durable runtime record for one logical step within an Execution.\ntype StepExecution struct {
 	ID          StepExecutionID `json:"id"`
 	ExecutionID ExecutionID     `json:"execution_id"`
 	StepID      string          `json:"step_id"`
@@ -121,7 +121,7 @@ type StepExecution struct {
 	CompletedAt *time.Time      `json:"completed_at,omitempty"`
 }
 
-type StepAttempt struct {
+// StepAttempt is the durable record of one invocation attempt for a StepExecution.\ntype StepAttempt struct {
 	ID              StepAttemptID     `json:"id"`
 	StepExecutionID StepExecutionID   `json:"step_execution_id"`
 	Attempt         uint              `json:"attempt"`
@@ -131,7 +131,7 @@ type StepAttempt struct {
 	Error           *ExecutionError   `json:"error,omitempty"`
 }
 
-type WorkflowContext struct {
+// WorkflowContext is the step-facing view constructed from workflow input and completed step outputs.\ntype WorkflowContext struct {
 	Input json.RawMessage            `json:"input"`
 	Steps map[string]json.RawMessage `json:"steps"`
 }
