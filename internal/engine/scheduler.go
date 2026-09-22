@@ -163,6 +163,7 @@ func (s *Scheduler) executeStep(
 	}
 
 	attemptNumber := uint(0)
+	var lastStepErr error
 	action := func(attemptCtx context.Context) (StepResult, error) {
 		attemptNumber++
 
@@ -185,6 +186,8 @@ func (s *Scheduler) executeStep(
 			}
 			return result, nil
 		}
+
+		lastStepErr = stepErr
 
 		if errors.Is(attemptCtx.Err(), context.Canceled) {
 			if err := s.repository.CancelStepAttempt(context.Background(), attemptID); err != nil {
@@ -235,6 +238,12 @@ func (s *Scheduler) executeStep(
 
 	result, err := resile.Do(ctx, action, options...)
 	if err != nil {
+		if ctx.Err() != nil {
+			return StepResult{}, ctx.Err()
+		}
+		if lastStepErr != nil {
+			return StepResult{}, unwrapPermanent(lastStepErr)
+		}
 		return StepResult{}, unwrapPermanent(err)
 	}
 	return result, nil
