@@ -133,7 +133,10 @@ func (r *MemoryExecutionRepository) FailExecution(_ context.Context, id Executio
 func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status ExecutionStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, ok := r.executions[id]; if !ok { return ErrNotFound }
+	e, ok := r.executions[id]
+	if !ok {
+		return ErrNotFound
+	}
 	if e.Status != ExecutionRunning && e.Status != ExecutionCancelRequested {
 		return transitionError("execution", string(e.Status), string(status))
 	}
@@ -152,7 +155,10 @@ func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status Execu
 func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, ok := r.executions[id]; if !ok { return ErrNotFound }
+	e, ok := r.executions[id]
+	if !ok {
+		return ErrNotFound
+	}
 	if e.Status == ExecutionCancelRequested || e.Status == ExecutionCancelled {
 		return nil
 	}
@@ -338,6 +344,36 @@ func (r *MemoryExecutionRepository) CompleteStepAttempt(_ context.Context, id St
 // and emits step.attempt_failed atomically.
 func (r *MemoryExecutionRepository) FailStepAttempt(_ context.Context, id StepAttemptID, execErr ExecutionError) error {
 	return r.finishAttempt(id, StepAttemptFailed, &execErr)
+}
+
+// RecordStepRetryScheduled records that another attempt will be made after the
+// identified failed attempt. The attempt must already be in the failed state.
+func (r *MemoryExecutionRepository) RecordStepRetryScheduled(_ context.Context, id StepAttemptID) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	attempt, ok := r.attempts[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if attempt.Status != StepAttemptFailed {
+		return transitionError("step attempt", string(attempt.Status), "retry scheduled")
+	}
+
+	step, ok := r.steps[attempt.StepExecutionID]
+	if !ok {
+		return ErrNotFound
+	}
+
+	now := time.Now().UTC()
+	r.appendEventLocked(step.ExecutionID, ExecutionEvent{
+		ExecutionID:     step.ExecutionID,
+		Type:            EventStepRetryScheduled,
+		StepExecutionID: step.ID,
+		StepAttemptID:   id,
+		CreatedAt:       now,
+	})
+	return nil
 }
 
 // CancelStepAttempt transitions a running attempt to cancelled. Repeating the
