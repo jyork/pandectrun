@@ -38,6 +38,8 @@ func NewMemoryExecutionRepository() *MemoryExecutionRepository {
 	}
 }
 
+// CreateExecution creates a pending execution, assigns its ID and creation time,
+// and records an execution.created event atomically.
 func (r *MemoryExecutionRepository) CreateExecution(_ context.Context, in NewExecution) (ExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -49,6 +51,8 @@ func (r *MemoryExecutionRepository) CreateExecution(_ context.Context, in NewExe
 	return id, nil
 }
 
+// GetExecution returns a copy of the execution identified by id.
+// It returns ErrNotFound when the execution does not exist.
 func (r *MemoryExecutionRepository) GetExecution(_ context.Context, id ExecutionID) (Execution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -59,6 +63,8 @@ func (r *MemoryExecutionRepository) GetExecution(_ context.Context, id Execution
 	return cloneExecution(e), nil
 }
 
+// ListExecutions returns executions matching q in deterministic creation order.
+// A positive Limit bounds the result; zero or a negative value is unbounded.
 func (r *MemoryExecutionRepository) ListExecutions(_ context.Context, q ExecutionQuery) ([]Execution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -90,6 +96,8 @@ func (r *MemoryExecutionRepository) ListExecutions(_ context.Context, q Executio
 	return out, nil
 }
 
+// StartExecution transitions a pending execution to running, records its start time,
+// and emits execution.started atomically.
 func (r *MemoryExecutionRepository) StartExecution(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -108,14 +116,20 @@ func (r *MemoryExecutionRepository) StartExecution(_ context.Context, id Executi
 	return nil
 }
 
+// CompleteExecution transitions a running or cancel-requested execution to completed,
+// persists its output, and emits execution.completed atomically.
 func (r *MemoryExecutionRepository) CompleteExecution(_ context.Context, id ExecutionID, output json.RawMessage) error {
 	return r.finishExecution(id, ExecutionCompleted, output, nil, EventExecutionCompleted)
 }
 
+// FailExecution transitions a running or cancel-requested execution to failed,
+// persists the terminal error, and emits execution.failed atomically.
 func (r *MemoryExecutionRepository) FailExecution(_ context.Context, id ExecutionID, execErr ExecutionError) error {
 	return r.finishExecution(id, ExecutionFailed, nil, &execErr, EventExecutionFailed)
 }
 
+// finishExecution applies a terminal execution transition and its event while
+// holding the repository lock, keeping state and history consistent.
 func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status ExecutionStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -133,6 +147,8 @@ func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status Execu
 	return nil
 }
 
+// RequestCancellation records cancellation intent for a pending or running execution.
+// Repeated requests for cancel-requested or cancelled executions are idempotent.
 func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -150,6 +166,8 @@ func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id Ex
 	return nil
 }
 
+// CompleteCancellation transitions a cancel-requested execution to cancelled and
+// records its completion time. Repeating the operation after cancellation is idempotent.
 func (r *MemoryExecutionRepository) CompleteCancellation(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -168,6 +186,8 @@ func (r *MemoryExecutionRepository) CompleteCancellation(_ context.Context, id E
 	return nil
 }
 
+// CreateStepExecution creates a pending runtime record for a logical workflow step.
+// It returns ErrNotFound when the parent execution does not exist.
 func (r *MemoryExecutionRepository) CreateStepExecution(_ context.Context, in NewStepExecution) (StepExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -180,6 +200,8 @@ func (r *MemoryExecutionRepository) CreateStepExecution(_ context.Context, in Ne
 	return id, nil
 }
 
+// GetStepExecution returns a copy of the step execution identified by id.
+// It returns ErrNotFound when the step execution does not exist.
 func (r *MemoryExecutionRepository) GetStepExecution(_ context.Context, id StepExecutionID) (StepExecution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -190,6 +212,8 @@ func (r *MemoryExecutionRepository) GetStepExecution(_ context.Context, id StepE
 	return cloneStepExecution(s), nil
 }
 
+// ListStepExecutions returns the step executions belonging to executionID in
+// deterministic ID order. It returns ErrNotFound when the execution does not exist.
 func (r *MemoryExecutionRepository) ListStepExecutions(_ context.Context, executionID ExecutionID) ([]StepExecution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -208,6 +232,8 @@ func (r *MemoryExecutionRepository) ListStepExecutions(_ context.Context, execut
 	return out, nil
 }
 
+// StartStep transitions a pending step to running, records its start time, and
+// emits step.started atomically.
 func (r *MemoryExecutionRepository) StartStep(_ context.Context, id StepExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -226,12 +252,18 @@ func (r *MemoryExecutionRepository) StartStep(_ context.Context, id StepExecutio
 	return nil
 }
 
+// CompleteStep transitions a running step to completed, persists its immutable
+// output, and emits step.completed atomically.
 func (r *MemoryExecutionRepository) CompleteStep(_ context.Context, id StepExecutionID, output json.RawMessage) error {
 	return r.finishStep(id, StepCompleted, output, nil, EventStepCompleted)
 }
+// FailStep transitions a running step to failed, persists its terminal error,
+// and emits step.failed atomically.
 func (r *MemoryExecutionRepository) FailStep(_ context.Context, id StepExecutionID, execErr ExecutionError) error {
 	return r.finishStep(id, StepFailed, nil, &execErr, EventStepFailed)
 }
+// CancelStep transitions a pending or running step to cancelled and emits
+// step.cancelled atomically. Repeating the operation after cancellation is idempotent.
 func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -252,6 +284,8 @@ func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecuti
 	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepCancelled, StepExecutionID: id, CreatedAt: now})
 	return nil
 }
+// finishStep applies a terminal step transition and its event while holding the
+// repository lock, including the step's output or terminal error.
 func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -272,6 +306,8 @@ func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepSt
 	return nil
 }
 
+// CreateStepAttempt creates a running attempt for a running step execution,
+// assigns its ID and start time, and emits step.attempt_started atomically.
 func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewStepAttempt) (StepAttemptID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -289,15 +325,22 @@ func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewS
 	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepAttemptStarted, StepExecutionID: s.ID, StepAttemptID: id, CreatedAt: now})
 	return id, nil
 }
+// CompleteStepAttempt transitions a running attempt to completed.
 func (r *MemoryExecutionRepository) CompleteStepAttempt(_ context.Context, id StepAttemptID) error {
 	return r.finishAttempt(id, StepAttemptCompleted, nil)
 }
+// FailStepAttempt transitions a running attempt to failed, persists its error,
+// and emits step.attempt_failed atomically.
 func (r *MemoryExecutionRepository) FailStepAttempt(_ context.Context, id StepAttemptID, execErr ExecutionError) error {
 	return r.finishAttempt(id, StepAttemptFailed, &execErr)
 }
+// CancelStepAttempt transitions a running attempt to cancelled. Repeating the
+// operation after cancellation is idempotent.
 func (r *MemoryExecutionRepository) CancelStepAttempt(_ context.Context, id StepAttemptID) error {
 	return r.finishAttempt(id, StepAttemptCancelled, nil)
 }
+// finishAttempt applies a terminal attempt transition. Failed attempts also emit
+// step.attempt_failed while the repository lock is held.
 func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepAttemptStatus, execErr *ExecutionError) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -322,6 +365,8 @@ func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepA
 	}
 	return nil
 }
+// ListStepAttempts returns attempts for stepID ordered by attempt number.
+// It returns ErrNotFound when the step execution does not exist.
 func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID StepExecutionID) ([]StepAttempt, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -339,6 +384,8 @@ func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID S
 	})
 	return out, nil
 }
+// ListEvents returns a copy of the chronological event history for executionID.
+// It returns ErrNotFound when the execution does not exist.
 func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID ExecutionID) ([]ExecutionEvent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -347,12 +394,16 @@ func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID Ex
 	}
 	return append([]ExecutionEvent(nil), r.events[executionID]...), nil
 }
+// appendEventLocked appends an event while the caller holds r.mu for writing.
 func (r *MemoryExecutionRepository) appendEventLocked(id ExecutionID, event ExecutionEvent) {
 	r.events[id] = append(r.events[id], event)
 }
+// transitionError wraps ErrInvalidTransition with the rejected lifecycle change.
 func transitionError(entity, from, to string) error {
 	return fmt.Errorf("%w: %s %s -> %s", ErrInvalidTransition, entity, from, to)
 }
+// cloneExecution returns an execution whose mutable byte slices and pointer fields
+// do not alias repository-owned state.
 func cloneExecution(e Execution) Execution {
 	e.Input = cloneRawMessage(e.Input)
 	e.Output = cloneRawMessage(e.Output)
@@ -361,6 +412,7 @@ func cloneExecution(e Execution) Execution {
 	e.CompletedAt = cloneTime(e.CompletedAt)
 	return e
 }
+// cloneStepExecution returns a step execution detached from repository-owned state.
 func cloneStepExecution(s StepExecution) StepExecution {
 	s.Output = cloneRawMessage(s.Output)
 	s.Error = cloneExecutionError(s.Error)
@@ -368,11 +420,13 @@ func cloneStepExecution(s StepExecution) StepExecution {
 	s.CompletedAt = cloneTime(s.CompletedAt)
 	return s
 }
+// cloneStepAttempt returns a step attempt detached from repository-owned state.
 func cloneStepAttempt(a StepAttempt) StepAttempt {
 	a.Error = cloneExecutionError(a.Error)
 	a.CompletedAt = cloneTime(a.CompletedAt)
 	return a
 }
+// cloneExecutionError returns a copy of e, preserving nil.
 func cloneExecutionError(e *ExecutionError) *ExecutionError {
 	if e == nil {
 		return nil
@@ -380,6 +434,7 @@ func cloneExecutionError(e *ExecutionError) *ExecutionError {
 	c := *e
 	return &c
 }
+// cloneTime returns a copy of t, preserving nil.
 func cloneTime(t *time.Time) *time.Time {
 	if t == nil {
 		return nil
