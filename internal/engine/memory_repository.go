@@ -177,7 +177,10 @@ func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id Ex
 func (r *MemoryExecutionRepository) CompleteCancellation(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	e, ok := r.executions[id]; if !ok { return ErrNotFound }
+	e, ok := r.executions[id]
+	if !ok {
+		return ErrNotFound
+	}
 	if e.Status == ExecutionCancelled {
 		return nil
 	}
