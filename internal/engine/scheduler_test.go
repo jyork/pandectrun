@@ -86,17 +86,27 @@ func TestSchedulerExecutesDAGSequentiallyAndPersistsHistory(t *testing.T) {
 	}
 
 	execution, err := repo.GetExecution(context.Background(), executionID)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+\t\tt.Fatal(err)
+\t}
 	if execution.Status != ExecutionCompleted {
 		t.Fatalf("execution status = %q, want %q", execution.Status, ExecutionCompleted)
 	}
 	steps, err := repo.ListStepExecutions(context.Background(), executionID)
-	if err != nil { t.Fatal(err) }
-	if len(steps) != 4 { t.Fatalf("steps = %d, want 4", len(steps)) }
+	if err != nil {
+\t\tt.Fatal(err)
+\t}
+	if len(steps) != 4 {
+\t\tt.Fatalf("steps = %d, want 4", len(steps))
+\t}
 	for _, step := range steps {
-		if step.Status != StepCompleted { t.Fatalf("step %q status = %q", step.StepID, step.Status) }
+		if step.Status != StepCompleted {
+\t\t\tt.Fatalf("step %q status = %q", step.StepID, step.Status)
+\t\t}
 		attempts, err := repo.ListStepAttempts(context.Background(), step.ID)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+\t\tt.Fatal(err)
+\t}
 		if len(attempts) != 1 || attempts[0].Status != StepAttemptCompleted {
 			t.Fatalf("step %q attempts = %+v, want one completed attempt", step.StepID, attempts)
 		}
@@ -116,19 +126,35 @@ func TestSchedulerFailsFastAndPersistsFailure(t *testing.T) {
 	}}
 
 	executionID, err := NewScheduler(registry, repo).Execute(context.Background(), def, nil)
-	if err == nil { t.Fatal("Execute() error = nil, want failure") }
+	if err == nil {
+\t\tt.Fatal("Execute() error = nil, want failure")
+\t}
 
 	execution, getErr := repo.GetExecution(context.Background(), executionID)
-	if getErr != nil { t.Fatal(getErr) }
-	if execution.Status != ExecutionFailed { t.Fatalf("status = %q, want %q", execution.Status, ExecutionFailed) }
-	if execution.Error == nil || execution.Error.Message != "boom" { t.Fatalf("execution error = %+v", execution.Error) }
+	if getErr != nil {
+\t\tt.Fatal(getErr)
+\t}
+	if execution.Status != ExecutionFailed {
+\t\tt.Fatalf("status = %q, want %q", execution.Status, ExecutionFailed)
+\t}
+	if execution.Error == nil || execution.Error.Message != "boom" {
+\t\tt.Fatalf("execution error = %+v", execution.Error)
+\t}
 
 	steps, listErr := repo.ListStepExecutions(context.Background(), executionID)
-	if listErr != nil { t.Fatal(listErr) }
+	if listErr != nil {
+\t\tt.Fatal(listErr)
+\t}
 	byStep := make(map[string]StepExecution)
-	for _, step := range steps { byStep[step.StepID] = step }
-	if byStep["bad"].Status != StepFailed { t.Fatalf("bad status = %q", byStep["bad"].Status) }
-	if byStep["later"].Status != StepPending { t.Fatalf("later status = %q", byStep["later"].Status) }
+	for _, step := range steps {
+\t\tbyStep[step.StepID] = step
+\t}
+	if byStep["bad"].Status != StepFailed {
+\t\tt.Fatalf("bad status = %q", byStep["bad"].Status)
+\t}
+	if byStep["later"].Status != StepPending {
+\t\tt.Fatalf("later status = %q", byStep["later"].Status)
+\t}
 }
 
 
