@@ -61,7 +61,6 @@ func (s *classifyingStep) IsRetryable(error) bool {
 	return s.retry
 }
 
-
 func (failingStep) Execute(context.Context, StepInput) (StepResult, error) {
 	return StepResult{}, fmt.Errorf("boom")
 }
@@ -93,26 +92,26 @@ func TestSchedulerExecutesDAGSequentiallyAndPersistsHistory(t *testing.T) {
 
 	execution, err := repo.GetExecution(context.Background(), executionID)
 	if err != nil {
-\t\tt.Fatal(err)
-\t}
+		t.Fatal(err)
+	}
 	if execution.Status != ExecutionCompleted {
 		t.Fatalf("execution status = %q, want %q", execution.Status, ExecutionCompleted)
 	}
 	steps, err := repo.ListStepExecutions(context.Background(), executionID)
 	if err != nil {
-\t\tt.Fatal(err)
-\t}
+		t.Fatal(err)
+	}
 	if len(steps) != 4 {
-\t\tt.Fatalf("steps = %d, want 4", len(steps))
-\t}
+		t.Fatalf("steps = %d, want 4", len(steps))
+	}
 	for _, step := range steps {
 		if step.Status != StepCompleted {
-\t\t\tt.Fatalf("step %q status = %q", step.StepID, step.Status)
-\t\t}
+			t.Fatalf("step %q status = %q", step.StepID, step.Status)
+		}
 		attempts, err := repo.ListStepAttempts(context.Background(), step.ID)
 		if err != nil {
-\t\tt.Fatal(err)
-\t}
+		t.Fatal(err)
+	}
 		if len(attempts) != 1 || attempts[0].Status != StepAttemptCompleted {
 			t.Fatalf("step %q attempts = %+v, want one completed attempt", step.StepID, attempts)
 		}
@@ -133,36 +132,35 @@ func TestSchedulerFailsFastAndPersistsFailure(t *testing.T) {
 
 	executionID, err := NewScheduler(registry, repo).Execute(context.Background(), def, nil)
 	if err == nil {
-\t\tt.Fatal("Execute() error = nil, want failure")
-\t}
+		t.Fatal("Execute() error = nil, want failure")
+	}
 
 	execution, getErr := repo.GetExecution(context.Background(), executionID)
 	if getErr != nil {
-\t\tt.Fatal(getErr)
-\t}
+		t.Fatal(getErr)
+	}
 	if execution.Status != ExecutionFailed {
-\t\tt.Fatalf("status = %q, want %q", execution.Status, ExecutionFailed)
-\t}
+		t.Fatalf("status = %q, want %q", execution.Status, ExecutionFailed)
+	}
 	if execution.Error == nil || execution.Error.Message != "boom" {
-\t\tt.Fatalf("execution error = %+v", execution.Error)
-\t}
+		t.Fatalf("execution error = %+v", execution.Error)
+	}
 
 	steps, listErr := repo.ListStepExecutions(context.Background(), executionID)
 	if listErr != nil {
-\t\tt.Fatal(listErr)
-\t}
+		t.Fatal(listErr)
+	}
 	byStep := make(map[string]StepExecution)
 	for _, step := range steps {
-\t\tbyStep[step.StepID] = step
-\t}
+		byStep[step.StepID] = step
+	}
 	if byStep["bad"].Status != StepFailed {
-\t\tt.Fatalf("bad status = %q", byStep["bad"].Status)
-\t}
+		t.Fatalf("bad status = %q", byStep["bad"].Status)
+	}
 	if byStep["later"].Status != StepPending {
-\t\tt.Fatalf("later status = %q", byStep["later"].Status)
-\t}
+		t.Fatalf("later status = %q", byStep["later"].Status)
+	}
 }
-
 
 func TestSchedulerRetriesConfiguredStepAndPersistsAttempts(t *testing.T) {
 	implementation := &retryThenSucceedStep{}
