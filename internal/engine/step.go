@@ -3,17 +3,66 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
 
+// StepInput contains the execution identity, definition, and accumulated workflow
+// context supplied to a step implementation.
 type StepInput struct {
 	ExecutionID ExecutionID
 	Step        StepDefinition
 	Context     WorkflowContext
 }
 
+// StepResult contains the durable output produced by a successful step attempt.
 type StepResult struct {
 	Output json.RawMessage
+}
+
+
+// PermanentError marks an error as non-retryable. The scheduler fails the
+// logical step immediately even when its definition has a retry policy.
+type PermanentError struct {
+	Err error
+}
+
+// Error returns the wrapped error message.
+func (e *PermanentError) Error() string {
+	if e == nil || e.Err == nil {
+		return "permanent error"
+	}
+	return e.Err.Error()
+}
+
+// Unwrap exposes the underlying error for errors.Is and errors.As.
+func (e *PermanentError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// Permanent wraps err so the scheduler treats it as non-retryable.
+// A nil error remains nil.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PermanentError{Err: err}
+}
+
+// IsPermanent reports whether err or any wrapped error is explicitly permanent.
+func IsPermanent(err error) bool {
+	var permanentErr *PermanentError
+	return errors.As(err, &permanentErr)
+}
+
+// RetryClassifier is an optional capability implemented by steps that need
+// domain-specific retry decisions. It is consulted only when a retry policy is
+// configured and the error has not already been marked permanent.
+type RetryClassifier interface {
+	IsRetryable(error) bool
 }
 
 // Step executes one workflow step. Implementations receive constructed
