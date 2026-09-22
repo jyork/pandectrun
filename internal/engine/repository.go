@@ -25,6 +25,7 @@ const (
 	EventStepStarted              ExecutionEventType = "step.started"
 	EventStepAttemptStarted       ExecutionEventType = "step.attempt_started"
 	EventStepAttemptFailed        ExecutionEventType = "step.attempt_failed"
+	EventStepRetryScheduled       ExecutionEventType = "step.retry_scheduled"
 	EventStepCompleted            ExecutionEventType = "step.completed"
 	EventStepFailed               ExecutionEventType = "step.failed"
 	EventStepCancelled            ExecutionEventType = "step.cancelled"
@@ -65,6 +66,7 @@ type ExecutionRepository interface {
 	CreateStepAttempt(context.Context, NewStepAttempt) (StepAttemptID, error)
 	CompleteStepAttempt(context.Context, StepAttemptID) error
 	FailStepAttempt(context.Context, StepAttemptID, ExecutionError) error
+	RecordStepRetryScheduled(context.Context, StepAttemptID) error
 	CancelStepAttempt(context.Context, StepAttemptID) error
 	ListStepAttempts(context.Context, StepExecutionID) ([]StepAttempt, error)
 
