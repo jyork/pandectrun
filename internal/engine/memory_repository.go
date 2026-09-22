@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-type MemoryExecutionRepository struct {
+// MemoryExecutionRepository is an in-memory ExecutionRepository implementation.\n// It serializes mutations with a mutex so lifecycle state and emitted events are\n// updated atomically, matching the transaction boundary expected from durable stores.\ntype MemoryExecutionRepository struct {
 	mu sync.RWMutex
 
 	executions map[ExecutionID]Execution
@@ -24,7 +24,7 @@ type MemoryExecutionRepository struct {
 
 var _ ExecutionRepository = (*MemoryExecutionRepository)(nil)
 
-func NewMemoryExecutionRepository() *MemoryExecutionRepository {
+// NewMemoryExecutionRepository returns an empty repository suitable for local\n// execution and tests. Runtime IDs are generated within this repository instance.\nfunc NewMemoryExecutionRepository() *MemoryExecutionRepository {
 	return &MemoryExecutionRepository{
 		executions: make(map[ExecutionID]Execution),
 		steps:      make(map[StepExecutionID]StepExecution),
