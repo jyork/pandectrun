@@ -12,7 +12,8 @@ var (
 	ErrInvalidTransition = errors.New("invalid lifecycle transition")
 )
 
-// ExecutionEventType identifies a chronological lifecycle event emitted while an execution runs.\ntype ExecutionEventType string
+// ExecutionEventType identifies a chronological lifecycle event emitted while an execution runs.
+type ExecutionEventType string
 
 const (
 	EventExecutionCreated         ExecutionEventType = "execution.created"
@@ -29,7 +30,9 @@ const (
 	EventStepCancelled            ExecutionEventType = "step.cancelled"
 )
 
-// ExecutionEvent records a durable point in an execution's lifecycle history.\n// StepExecutionID and StepAttemptID are populated only for events at those scopes.\ntype ExecutionEvent struct {
+// ExecutionEvent records a durable point in an execution's lifecycle history.
+// StepExecutionID and StepAttemptID are populated only for events at those scopes.
+type ExecutionEvent struct {
 	ExecutionID     ExecutionID        `json:"execution_id"`
 	Type            ExecutionEventType `json:"type"`
 	StepExecutionID StepExecutionID    `json:"step_execution_id,omitempty"`
@@ -37,7 +40,10 @@ const (
 	CreatedAt       time.Time          `json:"created_at"`
 }
 
-// ExecutionRepository persists execution, step, attempt, and event state through\n// lifecycle-oriented operations. Implementations own runtime IDs and lifecycle\n// timestamps and must keep each state transition and its corresponding event atomic.\ntype ExecutionRepository interface {
+// ExecutionRepository persists execution, step, attempt, and event state through
+// lifecycle-oriented operations. Implementations own runtime IDs and lifecycle
+// timestamps and must keep each state transition and its corresponding event atomic.
+type ExecutionRepository interface {
 	CreateExecution(context.Context, NewExecution) (ExecutionID, error)
 	GetExecution(context.Context, ExecutionID) (Execution, error)
 	ListExecutions(context.Context, ExecutionQuery) ([]Execution, error)
