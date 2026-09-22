@@ -88,6 +88,8 @@ sequenceDiagram
 
 The repository operations shown here are conceptual. The implementation may combine operations where doing so is necessary to preserve atomic state and event semantics.
 
+Retries are enabled only when the step has a `RetryPolicy`. Without one, a failed first attempt is terminal. With a retry policy, unclassified errors are retryable by default; explicit permanent/non-retryable classification stops retries immediately, and an optional step-specific `RetryClassifier` may classify other errors. Execution cancellation bypasses normal retry classification and does not schedule another attempt.
+
 ## Cancellation sequence
 
 A cancellation request is persisted before the scheduler attempts to stop active work.

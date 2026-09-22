@@ -162,6 +162,29 @@ StepExecution -> completed
 
 Retrying an entire failed execution is different. It creates another `Execution` related to the failed execution rather than resetting or rewriting the failed execution.
 
+### Retry eligibility and error classification
+
+Retries are opt-in per step through `RetryPolicy`. A step without a retry policy receives one attempt; if that attempt fails, the step fails.
+
+When a retry policy is configured, an otherwise unclassified error is retryable by default. PandectRun then applies error classification to decide whether a particular failure is eligible for another attempt:
+
+1. cancellation caused by execution cancellation is handled separately and is never passed through normal retry classification;
+2. an explicitly permanent/non-retryable error terminates retries immediately;
+3. if the step implements the optional `RetryClassifier` contract, that classifier decides retryability for errors that have not already been classified as permanent;
+4. otherwise, the error remains retryable and the configured retry policy determines whether another attempt is available.
+
+A representative optional classification contract is:
+
+```go
+type RetryClassifier interface {
+    IsRetryable(error) bool
+}
+```
+
+Step implementations may use this contract when retryability requires domain-specific knowledge, such as distinguishing transient HTTP or provider failures from permanent request errors. Explicit permanent classification takes precedence over a step's `RetryClassifier`.
+
+PandectRun owns retry semantics, classification conventions, attempt persistence, and workflow events. Resile may implement retry timing and backoff internally, but Resile types and error wrappers must not appear in the public step contract or persisted workflow definitions.
+
 A completed step's output is immutable.
 
 ## Events
