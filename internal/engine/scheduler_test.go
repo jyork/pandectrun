@@ -41,6 +41,12 @@ func (s *permanentFailingStep) Execute(context.Context, StepInput) (StepResult, 
 	return StepResult{}, Permanent(fmt.Errorf("invalid request"))
 }
 
+// IsRetryable deliberately returns true to verify that explicit permanent
+// classification takes precedence over a step-specific classifier.
+func (s *permanentFailingStep) IsRetryable(error) bool {
+	return true
+}
+
 type classifyingStep struct {
 	attempts int
 	retry    bool
