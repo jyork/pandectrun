@@ -257,11 +257,13 @@ func (r *MemoryExecutionRepository) StartStep(_ context.Context, id StepExecutio
 func (r *MemoryExecutionRepository) CompleteStep(_ context.Context, id StepExecutionID, output json.RawMessage) error {
 	return r.finishStep(id, StepCompleted, output, nil, EventStepCompleted)
 }
+
 // FailStep transitions a running step to failed, persists its terminal error,
 // and emits step.failed atomically.
 func (r *MemoryExecutionRepository) FailStep(_ context.Context, id StepExecutionID, execErr ExecutionError) error {
 	return r.finishStep(id, StepFailed, nil, &execErr, EventStepFailed)
 }
+
 // CancelStep transitions a pending or running step to cancelled and emits
 // step.cancelled atomically. Repeating the operation after cancellation is idempotent.
 func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecutionID) error {
@@ -284,6 +286,7 @@ func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecuti
 	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepCancelled, StepExecutionID: id, CreatedAt: now})
 	return nil
 }
+
 // finishStep applies a terminal step transition and its event while holding the
 // repository lock, including the step's output or terminal error.
 func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
@@ -325,20 +328,24 @@ func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewS
 	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepAttemptStarted, StepExecutionID: s.ID, StepAttemptID: id, CreatedAt: now})
 	return id, nil
 }
+
 // CompleteStepAttempt transitions a running attempt to completed.
 func (r *MemoryExecutionRepository) CompleteStepAttempt(_ context.Context, id StepAttemptID) error {
 	return r.finishAttempt(id, StepAttemptCompleted, nil)
 }
+
 // FailStepAttempt transitions a running attempt to failed, persists its error,
 // and emits step.attempt_failed atomically.
 func (r *MemoryExecutionRepository) FailStepAttempt(_ context.Context, id StepAttemptID, execErr ExecutionError) error {
 	return r.finishAttempt(id, StepAttemptFailed, &execErr)
 }
+
 // CancelStepAttempt transitions a running attempt to cancelled. Repeating the
 // operation after cancellation is idempotent.
 func (r *MemoryExecutionRepository) CancelStepAttempt(_ context.Context, id StepAttemptID) error {
 	return r.finishAttempt(id, StepAttemptCancelled, nil)
 }
+
 // finishAttempt applies a terminal attempt transition. Failed attempts also emit
 // step.attempt_failed while the repository lock is held.
 func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepAttemptStatus, execErr *ExecutionError) error {
@@ -365,6 +372,7 @@ func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepA
 	}
 	return nil
 }
+
 // ListStepAttempts returns attempts for stepID ordered by attempt number.
 // It returns ErrNotFound when the step execution does not exist.
 func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID StepExecutionID) ([]StepAttempt, error) {
@@ -384,6 +392,7 @@ func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID S
 	})
 	return out, nil
 }
+
 // ListEvents returns a copy of the chronological event history for executionID.
 // It returns ErrNotFound when the execution does not exist.
 func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID ExecutionID) ([]ExecutionEvent, error) {
@@ -394,14 +403,17 @@ func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID Ex
 	}
 	return append([]ExecutionEvent(nil), r.events[executionID]...), nil
 }
+
 // appendEventLocked appends an event while the caller holds r.mu for writing.
 func (r *MemoryExecutionRepository) appendEventLocked(id ExecutionID, event ExecutionEvent) {
 	r.events[id] = append(r.events[id], event)
 }
+
 // transitionError wraps ErrInvalidTransition with the rejected lifecycle change.
 func transitionError(entity, from, to string) error {
 	return fmt.Errorf("%w: %s %s -> %s", ErrInvalidTransition, entity, from, to)
 }
+
 // cloneExecution returns an execution whose mutable byte slices and pointer fields
 // do not alias repository-owned state.
 func cloneExecution(e Execution) Execution {
@@ -412,6 +424,7 @@ func cloneExecution(e Execution) Execution {
 	e.CompletedAt = cloneTime(e.CompletedAt)
 	return e
 }
+
 // cloneStepExecution returns a step execution detached from repository-owned state.
 func cloneStepExecution(s StepExecution) StepExecution {
 	s.Output = cloneRawMessage(s.Output)
@@ -420,12 +433,14 @@ func cloneStepExecution(s StepExecution) StepExecution {
 	s.CompletedAt = cloneTime(s.CompletedAt)
 	return s
 }
+
 // cloneStepAttempt returns a step attempt detached from repository-owned state.
 func cloneStepAttempt(a StepAttempt) StepAttempt {
 	a.Error = cloneExecutionError(a.Error)
 	a.CompletedAt = cloneTime(a.CompletedAt)
 	return a
 }
+
 // cloneExecutionError returns a copy of e, preserving nil.
 func cloneExecutionError(e *ExecutionError) *ExecutionError {
 	if e == nil {
@@ -434,6 +449,7 @@ func cloneExecutionError(e *ExecutionError) *ExecutionError {
 	c := *e
 	return &c
 }
+
 // cloneTime returns a copy of t, preserving nil.
 func cloneTime(t *time.Time) *time.Time {
 	if t == nil {
