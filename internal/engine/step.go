@@ -28,6 +28,10 @@ type PermanentError struct {
 }
 
 // Error returns the wrapped error message.
+//
+// Returns:
+//   - string: the wrapped error message, or "permanent error" when the receiver
+//     or wrapped error is nil.
 func (e *PermanentError) Error() string {
 	if e == nil || e.Err == nil {
 		return "permanent error"
@@ -36,6 +40,9 @@ func (e *PermanentError) Error() string {
 }
 
 // Unwrap exposes the underlying error for errors.Is and errors.As.
+//
+// Returns:
+//   - error: the wrapped error, or nil when the receiver is nil.
 func (e *PermanentError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -45,6 +52,13 @@ func (e *PermanentError) Unwrap() error {
 
 // Permanent wraps err so the scheduler treats it as non-retryable.
 // A nil error remains nil.
+//
+// Parameters:
+//   - err: the error to classify as permanent.
+//
+// Returns:
+//   - error: err wrapped as a PermanentError, the original error when it is
+//     already permanent, or nil when err is nil.
 func Permanent(err error) error {
 	if err == nil || IsPermanent(err) {
 		return err
@@ -53,6 +67,12 @@ func Permanent(err error) error {
 }
 
 // IsPermanent reports whether err or any wrapped error is explicitly permanent.
+//
+// Parameters:
+//   - err: the error chain to inspect.
+//
+// Returns:
+//   - bool: true when err contains a PermanentError; otherwise false.
 func IsPermanent(err error) bool {
 	var permanentErr *PermanentError
 	return errors.As(err, &permanentErr)
@@ -96,6 +116,9 @@ type Registry struct {
 // NewRegistry returns an empty Registry ready to accept step implementations.
 // Applications normally construct one registry during startup, register all
 // supported step types, and then share that registry with the scheduler.
+//
+// Returns:
+//   - *Registry: a newly initialized, empty registry.
 func NewRegistry() *Registry {
 	return &Registry{steps: make(map[string]Step)}
 }
@@ -110,6 +133,14 @@ func NewRegistry() *Registry {
 // Register is intended for application initialization rather than dynamic
 // runtime mutation. Callers should complete registration before workflows are
 // executed or the registry is shared between goroutines.
+//
+// Parameters:
+//   - stepType: the StepDefinition.Type value used to resolve the implementation.
+//   - implementation: the Step implementation associated with stepType.
+//
+// Returns:
+//   - error: nil on success; otherwise an error for an empty type, nil
+//     implementation, or duplicate registration.
 func (r *Registry) Register(stepType string, implementation Step) error {
 	if stepType == "" {
 		return fmt.Errorf("step type is required")
@@ -133,6 +164,13 @@ func (r *Registry) Register(stepType string, implementation Step) error {
 //
 // Get does not modify registry state and may be called concurrently provided
 // the registry is no longer being mutated through Register.
+//
+// Parameters:
+//   - stepType: the StepDefinition.Type value to resolve.
+//
+// Returns:
+//   - Step: the registered implementation, or nil when stepType is not registered.
+//   - bool: true when an implementation was found; otherwise false.
 func (r *Registry) Get(stepType string) (Step, bool) {
 	step, ok := r.steps[stepType]
 	return step, ok
