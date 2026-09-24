@@ -177,6 +177,17 @@ func (r *MemoryExecutionRepository) FailExecution(_ context.Context, id Executio
 
 // finishExecution applies a terminal execution transition and its event while
 // holding the repository lock, keeping state and history consistent.
+//
+// Parameters:
+//   - id: the execution to transition.
+//   - status: the terminal status to assign.
+//   - output: the output to persist for successful completion.
+//   - execErr: the terminal error to persist, or nil when none applies.
+//   - eventType: the lifecycle event emitted for the transition.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the current state cannot reach status.
 func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status ExecutionStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -413,6 +424,17 @@ func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecuti
 
 // finishStep applies a terminal step transition and its event while holding the
 // repository lock, including the step's output or terminal error.
+//
+// Parameters:
+//   - id: the step execution to transition.
+//   - status: the terminal status to assign.
+//   - output: the successful output to persist, or nil when none applies.
+//   - execErr: the terminal error to persist, or nil when none applies.
+//   - eventType: the lifecycle event emitted for the transition.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the current state cannot reach status.
 func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -540,6 +562,15 @@ func (r *MemoryExecutionRepository) CancelStepAttempt(_ context.Context, id Step
 
 // finishAttempt applies a terminal attempt transition. Failed attempts also emit
 // step.attempt_failed while the repository lock is held.
+//
+// Parameters:
+//   - id: the step attempt to transition.
+//   - status: the terminal attempt status to assign.
+//   - execErr: the attempt error to persist, or nil when none applies.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the attempt is not running.
 func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepAttemptStatus, execErr *ExecutionError) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -611,17 +642,38 @@ func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID Ex
 }
 
 // appendEventLocked appends an event while the caller holds r.mu for writing.
+//
+// Parameters:
+//   - id: the execution whose event history receives event.
+//   - event: the lifecycle event to append.
+//
+// Returns:
+//   - none.
 func (r *MemoryExecutionRepository) appendEventLocked(id ExecutionID, event ExecutionEvent) {
 	r.events[id] = append(r.events[id], event)
 }
 
 // transitionError wraps ErrInvalidTransition with the rejected lifecycle change.
+//
+// Parameters:
+//   - entity: the kind of lifecycle entity whose transition was rejected.
+//   - from: the entity's current state.
+//   - to: the requested target state.
+//
+// Returns:
+//   - error: ErrInvalidTransition wrapped with the rejected state change.
 func transitionError(entity, from, to string) error {
 	return fmt.Errorf("%w: %s %s -> %s", ErrInvalidTransition, entity, from, to)
 }
 
 // cloneExecution returns an execution whose mutable byte slices and pointer fields
 // do not alias repository-owned state.
+//
+// Parameters:
+//   - e: the execution value to detach from repository-owned state.
+//
+// Returns:
+//   - Execution: a copy whose mutable fields do not alias e's mutable storage.
 func cloneExecution(e Execution) Execution {
 	e.Input = cloneRawMessage(e.Input)
 	e.Output = cloneRawMessage(e.Output)
@@ -632,6 +684,12 @@ func cloneExecution(e Execution) Execution {
 }
 
 // cloneStepExecution returns a step execution detached from repository-owned state.
+//
+// Parameters:
+//   - s: the step execution value to detach from repository-owned state.
+//
+// Returns:
+//   - StepExecution: a copy whose mutable fields do not alias s's mutable storage.
 func cloneStepExecution(s StepExecution) StepExecution {
 	s.Output = cloneRawMessage(s.Output)
 	s.Error = cloneExecutionError(s.Error)
@@ -641,6 +699,12 @@ func cloneStepExecution(s StepExecution) StepExecution {
 }
 
 // cloneStepAttempt returns a step attempt detached from repository-owned state.
+//
+// Parameters:
+//   - a: the step attempt value to detach from repository-owned state.
+//
+// Returns:
+//   - StepAttempt: a copy whose mutable fields do not alias a's mutable storage.
 func cloneStepAttempt(a StepAttempt) StepAttempt {
 	a.Error = cloneExecutionError(a.Error)
 	a.CompletedAt = cloneTime(a.CompletedAt)
@@ -648,6 +712,12 @@ func cloneStepAttempt(a StepAttempt) StepAttempt {
 }
 
 // cloneExecutionError returns a copy of e, preserving nil.
+//
+// Parameters:
+//   - e: the execution error to copy.
+//
+// Returns:
+//   - *ExecutionError: an independent copy of e, or nil when e is nil.
 func cloneExecutionError(e *ExecutionError) *ExecutionError {
 	if e == nil {
 		return nil
@@ -657,6 +727,12 @@ func cloneExecutionError(e *ExecutionError) *ExecutionError {
 }
 
 // cloneTime returns a copy of t, preserving nil.
+//
+// Parameters:
+//   - t: the time value to copy.
+//
+// Returns:
+//   - *time.Time: an independent copy of t, or nil when t is nil.
 func cloneTime(t *time.Time) *time.Time {
 	if t == nil {
 		return nil
