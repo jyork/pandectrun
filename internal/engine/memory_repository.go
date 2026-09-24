@@ -29,6 +29,9 @@ var _ ExecutionRepository = (*MemoryExecutionRepository)(nil)
 
 // NewMemoryExecutionRepository returns an empty repository suitable for local
 // execution and tests. Runtime IDs are generated within this repository instance.
+//
+// Returns:
+//   - *MemoryExecutionRepository: a newly initialized, empty repository.
 func NewMemoryExecutionRepository() *MemoryExecutionRepository {
 	return &MemoryExecutionRepository{
 		executions: make(map[ExecutionID]Execution),
@@ -40,6 +43,13 @@ func NewMemoryExecutionRepository() *MemoryExecutionRepository {
 
 // CreateExecution creates a pending execution, assigns its ID and creation time,
 // and records an execution.created event atomically.
+//
+// Parameters:
+//   - in: caller-supplied workflow identity, version, and input for the new execution.
+//
+// Returns:
+//   - ExecutionID: the repository-assigned ID of the new execution.
+//   - error: nil on success; otherwise an error preventing creation.
 func (r *MemoryExecutionRepository) CreateExecution(_ context.Context, in NewExecution) (ExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -53,6 +63,13 @@ func (r *MemoryExecutionRepository) CreateExecution(_ context.Context, in NewExe
 
 // GetExecution returns a copy of the execution identified by id.
 // It returns ErrNotFound when the execution does not exist.
+//
+// Parameters:
+//   - id: the execution ID to retrieve.
+//
+// Returns:
+//   - Execution: a detached copy of the persisted execution.
+//   - error: nil on success, or ErrNotFound when id does not exist.
 func (r *MemoryExecutionRepository) GetExecution(_ context.Context, id ExecutionID) (Execution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -65,6 +82,13 @@ func (r *MemoryExecutionRepository) GetExecution(_ context.Context, id Execution
 
 // ListExecutions returns executions matching q in deterministic creation order.
 // A positive Limit bounds the result; zero or a negative value is unbounded.
+//
+// Parameters:
+//   - q: optional workflow, status, and result-limit filters.
+//
+// Returns:
+//   - []Execution: detached execution records matching q in deterministic order.
+//   - error: nil on success.
 func (r *MemoryExecutionRepository) ListExecutions(_ context.Context, q ExecutionQuery) ([]Execution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -98,6 +122,13 @@ func (r *MemoryExecutionRepository) ListExecutions(_ context.Context, q Executio
 
 // StartExecution transitions a pending execution to running, records its start time,
 // and emits execution.started atomically.
+//
+// Parameters:
+//   - id: the pending execution to start.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the execution is not pending.
 func (r *MemoryExecutionRepository) StartExecution(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,12 +149,28 @@ func (r *MemoryExecutionRepository) StartExecution(_ context.Context, id Executi
 
 // CompleteExecution transitions a running or cancel-requested execution to completed,
 // persists its output, and emits execution.completed atomically.
+//
+// Parameters:
+//   - id: the running or cancel-requested execution to complete.
+//   - output: the final workflow output to persist.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the execution cannot transition to completed.
 func (r *MemoryExecutionRepository) CompleteExecution(_ context.Context, id ExecutionID, output json.RawMessage) error {
 	return r.finishExecution(id, ExecutionCompleted, output, nil, EventExecutionCompleted)
 }
 
 // FailExecution transitions a running or cancel-requested execution to failed,
 // persists the terminal error, and emits execution.failed atomically.
+//
+// Parameters:
+//   - id: the running or cancel-requested execution to fail.
+//   - execErr: the terminal error to persist.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the execution cannot transition to failed.
 func (r *MemoryExecutionRepository) FailExecution(_ context.Context, id ExecutionID, execErr ExecutionError) error {
 	return r.finishExecution(id, ExecutionFailed, nil, &execErr, EventExecutionFailed)
 }
@@ -152,6 +199,14 @@ func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status Execu
 
 // RequestCancellation records cancellation intent for a pending or running execution.
 // Repeated requests for cancel-requested or cancelled executions are idempotent.
+//
+// Parameters:
+//   - id: the pending or running execution for which cancellation is requested.
+//
+// Returns:
+//   - error: nil when cancellation is requested or already effective,
+//     ErrNotFound when id does not exist, or ErrInvalidTransition when the
+//     execution is already in another terminal state.
 func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -174,6 +229,14 @@ func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id Ex
 
 // CompleteCancellation transitions a cancel-requested execution to cancelled and
 // records its completion time. Repeating the operation after cancellation is idempotent.
+//
+// Parameters:
+//   - id: the cancel-requested execution to finalize as cancelled.
+//
+// Returns:
+//   - error: nil when cancellation is completed or already complete,
+//     ErrNotFound when id does not exist, or ErrInvalidTransition when the
+//     execution is not cancel-requested.
 func (r *MemoryExecutionRepository) CompleteCancellation(_ context.Context, id ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -197,6 +260,13 @@ func (r *MemoryExecutionRepository) CompleteCancellation(_ context.Context, id E
 
 // CreateStepExecution creates a pending runtime record for a logical workflow step.
 // It returns ErrNotFound when the parent execution does not exist.
+//
+// Parameters:
+//   - in: the parent execution ID and logical workflow step ID.
+//
+// Returns:
+//   - StepExecutionID: the repository-assigned ID of the new step execution.
+//   - error: nil on success, or ErrNotFound when the parent execution does not exist.
 func (r *MemoryExecutionRepository) CreateStepExecution(_ context.Context, in NewStepExecution) (StepExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -211,6 +281,13 @@ func (r *MemoryExecutionRepository) CreateStepExecution(_ context.Context, in Ne
 
 // GetStepExecution returns a copy of the step execution identified by id.
 // It returns ErrNotFound when the step execution does not exist.
+//
+// Parameters:
+//   - id: the step execution ID to retrieve.
+//
+// Returns:
+//   - StepExecution: a detached copy of the persisted step execution.
+//   - error: nil on success, or ErrNotFound when id does not exist.
 func (r *MemoryExecutionRepository) GetStepExecution(_ context.Context, id StepExecutionID) (StepExecution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -223,6 +300,13 @@ func (r *MemoryExecutionRepository) GetStepExecution(_ context.Context, id StepE
 
 // ListStepExecutions returns the step executions belonging to executionID in
 // deterministic ID order. It returns ErrNotFound when the execution does not exist.
+//
+// Parameters:
+//   - executionID: the parent execution whose step executions are requested.
+//
+// Returns:
+//   - []StepExecution: detached step executions in deterministic ID order.
+//   - error: nil on success, or ErrNotFound when executionID does not exist.
 func (r *MemoryExecutionRepository) ListStepExecutions(_ context.Context, executionID ExecutionID) ([]StepExecution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -243,6 +327,13 @@ func (r *MemoryExecutionRepository) ListStepExecutions(_ context.Context, execut
 
 // StartStep transitions a pending step to running, records its start time, and
 // emits step.started atomically.
+//
+// Parameters:
+//   - id: the pending step execution to start.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the step is not pending.
 func (r *MemoryExecutionRepository) StartStep(_ context.Context, id StepExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -263,18 +354,42 @@ func (r *MemoryExecutionRepository) StartStep(_ context.Context, id StepExecutio
 
 // CompleteStep transitions a running step to completed, persists its immutable
 // output, and emits step.completed atomically.
+//
+// Parameters:
+//   - id: the running step execution to complete.
+//   - output: the immutable successful output to persist.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the step is not running.
 func (r *MemoryExecutionRepository) CompleteStep(_ context.Context, id StepExecutionID, output json.RawMessage) error {
 	return r.finishStep(id, StepCompleted, output, nil, EventStepCompleted)
 }
 
 // FailStep transitions a running step to failed, persists its terminal error,
 // and emits step.failed atomically.
+//
+// Parameters:
+//   - id: the running step execution to fail.
+//   - execErr: the terminal step error to persist.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the step is not running.
 func (r *MemoryExecutionRepository) FailStep(_ context.Context, id StepExecutionID, execErr ExecutionError) error {
 	return r.finishStep(id, StepFailed, nil, &execErr, EventStepFailed)
 }
 
 // CancelStep transitions a pending or running step to cancelled and emits
 // step.cancelled atomically. Repeating the operation after cancellation is idempotent.
+//
+// Parameters:
+//   - id: the pending or running step execution to cancel.
+//
+// Returns:
+//   - error: nil when cancellation succeeds or is already complete,
+//     ErrNotFound when id does not exist, or ErrInvalidTransition when the
+//     step is in another terminal state.
 func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -320,6 +435,14 @@ func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepSt
 
 // CreateStepAttempt creates a running attempt for a running step execution,
 // assigns its ID and start time, and emits step.attempt_started atomically.
+//
+// Parameters:
+//   - in: the parent step execution ID and one-based attempt number.
+//
+// Returns:
+//   - StepAttemptID: the repository-assigned ID of the running attempt.
+//   - error: nil on success, ErrNotFound when the parent step does not exist,
+//     or ErrInvalidTransition when the parent step is not running.
 func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewStepAttempt) (StepAttemptID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -339,18 +462,40 @@ func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewS
 }
 
 // CompleteStepAttempt transitions a running attempt to completed.
+//
+// Parameters:
+//   - id: the running attempt to complete.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the attempt is not running.
 func (r *MemoryExecutionRepository) CompleteStepAttempt(_ context.Context, id StepAttemptID) error {
 	return r.finishAttempt(id, StepAttemptCompleted, nil)
 }
 
 // FailStepAttempt transitions a running attempt to failed, persists its error,
 // and emits step.attempt_failed atomically.
+//
+// Parameters:
+//   - id: the running attempt to fail.
+//   - execErr: the attempt error to persist.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when id does not exist, or
+//     ErrInvalidTransition when the attempt is not running.
 func (r *MemoryExecutionRepository) FailStepAttempt(_ context.Context, id StepAttemptID, execErr ExecutionError) error {
 	return r.finishAttempt(id, StepAttemptFailed, &execErr)
 }
 
 // RecordStepRetryScheduled records that another attempt will be made after the
 // identified failed attempt. The attempt must already be in the failed state.
+//
+// Parameters:
+//   - id: the failed attempt after which another attempt will be scheduled.
+//
+// Returns:
+//   - error: nil on success, ErrNotFound when the attempt or parent step does
+//     not exist, or ErrInvalidTransition when the attempt is not failed.
 func (r *MemoryExecutionRepository) RecordStepRetryScheduled(_ context.Context, id StepAttemptID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -381,6 +526,14 @@ func (r *MemoryExecutionRepository) RecordStepRetryScheduled(_ context.Context, 
 
 // CancelStepAttempt transitions a running attempt to cancelled. Repeating the
 // operation after cancellation is idempotent.
+//
+// Parameters:
+//   - id: the running attempt to cancel.
+//
+// Returns:
+//   - error: nil when cancellation succeeds or is already complete,
+//     ErrNotFound when id does not exist, or ErrInvalidTransition when the
+//     attempt is in another terminal state.
 func (r *MemoryExecutionRepository) CancelStepAttempt(_ context.Context, id StepAttemptID) error {
 	return r.finishAttempt(id, StepAttemptCancelled, nil)
 }
@@ -414,6 +567,13 @@ func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepA
 
 // ListStepAttempts returns attempts for stepID ordered by attempt number.
 // It returns ErrNotFound when the step execution does not exist.
+//
+// Parameters:
+//   - stepID: the step execution whose attempts are requested.
+//
+// Returns:
+//   - []StepAttempt: detached attempts ordered by one-based attempt number.
+//   - error: nil on success, or ErrNotFound when stepID does not exist.
 func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID StepExecutionID) ([]StepAttempt, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -434,6 +594,13 @@ func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID S
 
 // ListEvents returns a copy of the chronological event history for executionID.
 // It returns ErrNotFound when the execution does not exist.
+//
+// Parameters:
+//   - executionID: the execution whose lifecycle history is requested.
+//
+// Returns:
+//   - []ExecutionEvent: a copy of the execution's chronological event history.
+//   - error: nil on success, or ErrNotFound when executionID does not exist.
 func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID ExecutionID) ([]ExecutionEvent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
