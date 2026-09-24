@@ -18,6 +18,13 @@ type Scheduler struct {
 
 // NewScheduler constructs a scheduler using registry to resolve step
 // implementations and repository as the authoritative execution store.
+//
+// Parameters:
+//   - registry: the registry used to resolve workflow step implementations.
+//   - repository: the authoritative store for execution lifecycle state.
+//
+// Returns:
+//   - *Scheduler: a scheduler configured with registry and repository.
 func NewScheduler(registry *Registry, repository ExecutionRepository) *Scheduler {
 	return &Scheduler{registry: registry, repository: repository}
 }
@@ -25,6 +32,17 @@ func NewScheduler(registry *Registry, repository ExecutionRepository) *Scheduler
 // Execute runs one workflow execution and returns its repository-assigned ID.
 // Step execution is sequential in v1; configured retry policies may cause a
 // logical step to have multiple persisted attempts before it reaches a terminal state.
+//
+// Parameters:
+//   - ctx: controls cancellation and deadlines for the workflow execution.
+//   - def: the immutable workflow definition to validate and execute.
+//   - input: the workflow input persisted with the execution and exposed to steps.
+//
+// Returns:
+//   - ExecutionID: the repository-assigned execution ID. After creation succeeds,
+//     the ID is returned even when execution later fails.
+//   - error: nil when the workflow completes successfully; otherwise the
+//     validation, repository, cancellation, or step error that stopped execution.
 func (s *Scheduler) Execute(ctx context.Context, def WorkflowDefinition, input json.RawMessage) (ExecutionID, error) {
 	if err := ValidateWorkflow(def); err != nil {
 		return "", err
@@ -149,6 +167,19 @@ func (s *Scheduler) Execute(ctx context.Context, def WorkflowDefinition, input j
 // executeStep runs one logical step and persists every invocation as a distinct
 // StepAttempt. Resile owns retry timing; PandectRun owns retry eligibility,
 // persistence, and lifecycle events.
+//
+// Parameters:
+//   - ctx: controls cancellation and deadlines for the logical step.
+//   - executionID: identifies the parent workflow execution.
+//   - stepExecutionID: identifies the persisted logical step execution.
+//   - stepDef: defines the step configuration and retry policy.
+//   - implementation: executes each attempt and may optionally classify retries.
+//   - workflowContext: contains workflow input and completed dependency outputs.
+//
+// Returns:
+//   - StepResult: the successful result from the final attempt.
+//   - error: nil on success; otherwise the final step, cancellation, or
+//     repository error that prevented completion.
 func (s *Scheduler) executeStep(
 	ctx context.Context,
 	executionID ExecutionID,
@@ -252,6 +283,15 @@ func (s *Scheduler) executeStep(
 // isRetryable applies PandectRun's retry precedence. Retries require more than
 // one configured attempt, explicit permanent errors always stop retries, and an
 // optional step classifier decides otherwise-unclassified errors.
+//
+// Parameters:
+//   - policy: the retry policy configured for the step.
+//   - implementation: the step implementation, which may implement RetryClassifier.
+//   - err: the error returned by the most recent attempt.
+//
+// Returns:
+//   - bool: true when another attempt is eligible under PandectRun's retry
+//     classification rules; otherwise false.
 func (s *Scheduler) isRetryable(policy RetryPolicy, implementation Step, err error) bool {
 	if policy.MaxAttempts <= 1 {
 		return false
@@ -267,6 +307,13 @@ func (s *Scheduler) isRetryable(policy RetryPolicy, implementation Step, err err
 
 // unwrapPermanent returns the underlying step error when retry classification
 // wrapped it as permanent, keeping PandectRun's control marker out of user-facing errors.
+//
+// Parameters:
+//   - err: the error that may contain a PermanentError wrapper.
+//
+// Returns:
+//   - error: the underlying step error when permanent, err when it is not
+//     permanent, or nil when err is nil.
 func unwrapPermanent(err error) error {
 	if err == nil {
 		return nil
@@ -281,6 +328,12 @@ func unwrapPermanent(err error) error {
 
 // cloneRawMessage returns a copy of value so callers cannot mutate persisted or
 // accumulated workflow state through a shared byte slice.
+//
+// Parameters:
+//   - value: the raw JSON bytes to copy.
+//
+// Returns:
+//   - json.RawMessage: an independent copy of value, or nil when value is nil.
 func cloneRawMessage(value json.RawMessage) json.RawMessage {
 	if value == nil {
 		return nil
