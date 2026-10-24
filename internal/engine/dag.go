@@ -27,6 +27,13 @@ import "fmt"
 //
 // A nil return means the definition is safe for the scheduler to reason about;
 // it does not guarantee that execution will succeed.
+//
+// Parameters:
+//   - def: the workflow definition whose DAG structure is validated.
+//
+// Returns:
+//   - error: nil when def satisfies the structural invariants; otherwise an
+//     error describing the first invalid condition encountered.
 func ValidateWorkflow(def WorkflowDefinition) error {
 	if def.ID == "" {
 		return fmt.Errorf("workflow id is required")
@@ -95,6 +102,14 @@ func ValidateWorkflow(def WorkflowDefinition) error {
 // RunnableSteps returns pending steps whose dependencies have completed.
 // The definition order is preserved, giving the initial sequential scheduler
 // deterministic execution ordering when multiple steps are runnable.
+//
+// Parameters:
+//   - def: the workflow definition containing step dependencies and order.
+//   - statuses: the current runtime status keyed by logical step ID.
+//
+// Returns:
+//   - []StepDefinition: pending steps whose dependencies are all completed,
+//     preserving their order in def.
 func RunnableSteps(def WorkflowDefinition, statuses map[string]StepStatus) []StepDefinition {
 	var runnable []StepDefinition
 	for _, step := range def.Steps {

@@ -3,7 +3,10 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+
+	"github.com/cinar/resile"
 )
 
 // Scheduler executes validated workflow definitions sequentially and persists
@@ -13,10 +16,33 @@ type Scheduler struct {
 	repository ExecutionRepository
 }
 
+// NewScheduler constructs a scheduler using registry to resolve step
+// implementations and repository as the authoritative execution store.
+//
+// Parameters:
+//   - registry: the registry used to resolve workflow step implementations.
+//   - repository: the authoritative store for execution lifecycle state.
+//
+// Returns:
+//   - *Scheduler: a scheduler configured with registry and repository.
 func NewScheduler(registry *Registry, repository ExecutionRepository) *Scheduler {
 	return &Scheduler{registry: registry, repository: repository}
 }
 
+// Execute runs one workflow execution and returns its repository-assigned ID.
+// Step execution is sequential in v1; configured retry policies may cause a
+// logical step to have multiple persisted attempts before it reaches a terminal state.
+//
+// Parameters:
+//   - ctx: controls cancellation and deadlines for the workflow execution.
+//   - def: the immutable workflow definition to validate and execute.
+//   - input: the workflow input persisted with the execution and exposed to steps.
+//
+// Returns:
+//   - ExecutionID: the repository-assigned execution ID. After creation succeeds,
+//     the ID is returned even when execution later fails.
+//   - error: nil when the workflow completes successfully; otherwise the
+//     validation, repository, cancellation, or step error that stopped execution.
 func (s *Scheduler) Execute(ctx context.Context, def WorkflowDefinition, input json.RawMessage) (ExecutionID, error) {
 	if err := ValidateWorkflow(def); err != nil {
 		return "", err
@@ -110,24 +136,9 @@ func (s *Scheduler) Execute(ctx context.Context, def WorkflowDefinition, input j
 		}
 		statuses[stepDef.ID] = StepRunning
 
-		attemptID, err := s.repository.CreateStepAttempt(ctx, NewStepAttempt{
-			StepExecutionID: stepExecutionID,
-			Attempt:         1,
-		})
-		if err != nil {
-			return executionID, fmt.Errorf("create attempt for step %q: %w", stepDef.ID, err)
-		}
-
-		result, stepErr := implementation.Execute(ctx, StepInput{
-			ExecutionID: executionID,
-			Step:        stepDef,
-			Context:     workflowContext,
-		})
+		result, stepErr := s.executeStep(ctx, executionID, stepExecutionID, stepDef, implementation, workflowContext)
 		if stepErr != nil {
 			execErr := ExecutionError{Kind: ErrorTerminal, Message: stepErr.Error()}
-			if err := s.repository.FailStepAttempt(ctx, attemptID, execErr); err != nil {
-				return executionID, fmt.Errorf("fail attempt for step %q: %w", stepDef.ID, err)
-			}
 			if err := s.repository.FailStep(ctx, stepExecutionID, execErr); err != nil {
 				return executionID, fmt.Errorf("fail step %q: %w", stepDef.ID, err)
 			}
@@ -138,9 +149,6 @@ func (s *Scheduler) Execute(ctx context.Context, def WorkflowDefinition, input j
 			return executionID, fmt.Errorf("step %q failed: %w", stepDef.ID, stepErr)
 		}
 
-		if err := s.repository.CompleteStepAttempt(ctx, attemptID); err != nil {
-			return executionID, fmt.Errorf("complete attempt for step %q: %w", stepDef.ID, err)
-		}
 		if err := s.repository.CompleteStep(ctx, stepExecutionID, result.Output); err != nil {
 			return executionID, fmt.Errorf("complete step %q: %w", stepDef.ID, err)
 		}
@@ -156,6 +164,176 @@ func (s *Scheduler) Execute(ctx context.Context, def WorkflowDefinition, input j
 	return executionID, nil
 }
 
+// executeStep runs one logical step and persists every invocation as a distinct
+// StepAttempt. Resile owns retry timing; PandectRun owns retry eligibility,
+// persistence, and lifecycle events.
+//
+// Parameters:
+//   - ctx: controls cancellation and deadlines for the logical step.
+//   - executionID: identifies the parent workflow execution.
+//   - stepExecutionID: identifies the persisted logical step execution.
+//   - stepDef: defines the step configuration and retry policy.
+//   - implementation: executes each attempt and may optionally classify retries.
+//   - workflowContext: contains workflow input and completed dependency outputs.
+//
+// Returns:
+//   - StepResult: the successful result from the final attempt.
+//   - error: nil on success; otherwise the final step, cancellation, or
+//     repository error that prevented completion.
+func (s *Scheduler) executeStep(
+	ctx context.Context,
+	executionID ExecutionID,
+	stepExecutionID StepExecutionID,
+	stepDef StepDefinition,
+	implementation Step,
+	workflowContext WorkflowContext,
+) (StepResult, error) {
+	maxAttempts := stepDef.Retry.MaxAttempts
+	if maxAttempts == 0 {
+		maxAttempts = 1
+	}
+
+	attemptNumber := uint(0)
+	var lastStepErr error
+	action := func(attemptCtx context.Context) (StepResult, error) {
+		attemptNumber++
+
+		attemptID, err := s.repository.CreateStepAttempt(attemptCtx, NewStepAttempt{
+			StepExecutionID: stepExecutionID,
+			Attempt:         attemptNumber,
+		})
+		if err != nil {
+			return StepResult{}, fmt.Errorf("create attempt for step %q: %w", stepDef.ID, err)
+		}
+
+		result, stepErr := implementation.Execute(attemptCtx, StepInput{
+			ExecutionID: executionID,
+			Step:        stepDef,
+			Context:     workflowContext,
+		})
+		if stepErr == nil {
+			if err := s.repository.CompleteStepAttempt(attemptCtx, attemptID); err != nil {
+				return StepResult{}, fmt.Errorf("complete attempt for step %q: %w", stepDef.ID, err)
+			}
+			return result, nil
+		}
+
+		lastStepErr = stepErr
+
+		if errors.Is(attemptCtx.Err(), context.Canceled) {
+			if err := s.repository.CancelStepAttempt(context.Background(), attemptID); err != nil {
+				return StepResult{}, fmt.Errorf("cancel attempt for step %q: %w", stepDef.ID, err)
+			}
+			return StepResult{}, stepErr
+		}
+
+		retryable := s.isRetryable(stepDef.Retry, implementation, stepErr)
+		kind := ErrorTerminal
+		if retryable {
+			kind = ErrorRetryable
+		}
+		execErr := ExecutionError{Kind: kind, Message: stepErr.Error()}
+		if err := s.repository.FailStepAttempt(attemptCtx, attemptID, execErr); err != nil {
+			return StepResult{}, fmt.Errorf("fail attempt for step %q: %w", stepDef.ID, err)
+		}
+
+		if retryable && attemptNumber < maxAttempts {
+			if err := s.repository.RecordStepRetryScheduled(attemptCtx, attemptID); err != nil {
+				return StepResult{}, fmt.Errorf("record retry for step %q: %w", stepDef.ID, err)
+			}
+		}
+
+		if !retryable {
+			return StepResult{}, Permanent(stepErr)
+		}
+		return StepResult{}, stepErr
+	}
+
+	if maxAttempts == 1 {
+		result, err := action(ctx)
+		return result, unwrapPermanent(err)
+	}
+
+	options := []resile.Option{
+		resile.WithMaxAttempts(maxAttempts),
+		resile.WithRetryIfFunc(func(err error) bool {
+			return !IsPermanent(err)
+		}),
+	}
+	if stepDef.Retry.BaseDelay > 0 {
+		options = append(options, resile.WithBaseDelay(stepDef.Retry.BaseDelay))
+	}
+	if stepDef.Retry.MaxDelay > 0 {
+		options = append(options, resile.WithMaxDelay(stepDef.Retry.MaxDelay))
+	}
+
+	result, err := resile.Do(ctx, action, options...)
+	if err != nil {
+		if ctx.Err() != nil {
+			return StepResult{}, ctx.Err()
+		}
+		if lastStepErr != nil {
+			return StepResult{}, unwrapPermanent(lastStepErr)
+		}
+		return StepResult{}, unwrapPermanent(err)
+	}
+	return result, nil
+}
+
+// isRetryable applies PandectRun's retry precedence. Retries require more than
+// one configured attempt, explicit permanent errors always stop retries, and an
+// optional step classifier decides otherwise-unclassified errors.
+//
+// Parameters:
+//   - policy: the retry policy configured for the step.
+//   - implementation: the step implementation, which may implement RetryClassifier.
+//   - err: the error returned by the most recent attempt.
+//
+// Returns:
+//   - bool: true when another attempt is eligible under PandectRun's retry
+//     classification rules; otherwise false.
+func (s *Scheduler) isRetryable(policy RetryPolicy, implementation Step, err error) bool {
+	if policy.MaxAttempts <= 1 {
+		return false
+	}
+	if IsPermanent(err) {
+		return false
+	}
+	if classifier, ok := implementation.(RetryClassifier); ok {
+		return classifier.IsRetryable(err)
+	}
+	return true
+}
+
+// unwrapPermanent returns the underlying step error when retry classification
+// wrapped it as permanent, keeping PandectRun's control marker out of user-facing errors.
+//
+// Parameters:
+//   - err: the error that may contain a PermanentError wrapper.
+//
+// Returns:
+//   - error: the underlying step error when permanent, err when it is not
+//     permanent, or nil when err is nil.
+func unwrapPermanent(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	var permanentErr *PermanentError
+	if errors.As(err, &permanentErr) && permanentErr.Err != nil {
+		return permanentErr.Err
+	}
+	return err
+}
+
+// cloneRawMessage returns a copy of value so callers cannot mutate persisted or
+// accumulated workflow state through a shared byte slice.
+//
+// Parameters:
+//   - value: the raw JSON bytes to copy.
+//
+// Returns:
+//   - json.RawMessage: an independent copy of value, or nil when value is nil.
 func cloneRawMessage(value json.RawMessage) json.RawMessage {
 	if value == nil {
 		return nil

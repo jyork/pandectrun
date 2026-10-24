@@ -60,6 +60,7 @@ type ExecutionError struct {
 }
 
 // RetryPolicy defines the engine-owned retry limits and backoff parameters for a step.
+// MaxAttempts includes the initial attempt; values of zero or one therefore do not retry.
 type RetryPolicy struct {
 	MaxAttempts uint          `json:"max_attempts,omitempty"`
 	BaseDelay   time.Duration `json:"base_delay,omitempty"`
