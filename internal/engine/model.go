@@ -5,9 +5,14 @@ import (
 	"time"
 )
 
+// ExecutionID identifies a workflow invocation using a UUID string.
 type ExecutionID string
-type StepExecutionID string
-type StepAttemptID string
+
+// StepExecutionID identifies a logical step with a repository-assigned integer.
+type StepExecutionID int64
+
+// StepAttemptID identifies one invocation attempt with a repository-assigned integer.
+type StepAttemptID int64
 
 // ExecutionStatus describes the lifecycle state of a workflow execution.
 type ExecutionStatus string
