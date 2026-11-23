@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"testing"
 )
 
@@ -62,4 +63,58 @@ func TestMemoryRepositoryCompletedStepOutputIsImmutable(t *testing.T) {
 	output[10]='9'
 	step,_:=repo.GetStepExecution(ctx,stepID); if string(step.Output)!=`{"value":1}` { t.Fatalf("stored output = %s",step.Output) }
 	if err:=repo.CompleteStep(ctx,stepID,json.RawMessage(`{"value":2}`)); !errors.Is(err,ErrInvalidTransition) { t.Fatalf("second completion error = %v",err) }
+}
+
+func TestMemoryRepositoryIDTypes(t *testing.T) {
+	ctx := context.Background()
+	repo := NewMemoryExecutionRepository()
+
+	executionID, err := repo.CreateExecution(ctx, NewExecution{WorkflowID: "wf", WorkflowVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	uuidV4 := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+	if !uuidV4.MatchString(string(executionID)) {
+		t.Fatalf("execution ID %q is not a version 4 UUID", executionID)
+	}
+
+	secondExecutionID, err := repo.CreateExecution(ctx, NewExecution{WorkflowID: "wf", WorkflowVersion: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executionID == secondExecutionID {
+		t.Fatal("execution IDs must be unique")
+	}
+
+	stepID, err := repo.CreateStepExecution(ctx, NewStepExecution{ExecutionID: executionID, StepID: "first"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stepID != 1 {
+		t.Fatalf("first step ID = %d, want 1", stepID)
+	}
+
+	if err := repo.StartExecution(ctx, executionID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.StartStep(ctx, stepID); err != nil {
+		t.Fatal(err)
+	}
+
+	attemptID, err := repo.CreateStepAttempt(ctx, NewStepAttempt{StepExecutionID: stepID, Attempt: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attemptID != 1 {
+		t.Fatalf("first attempt ID = %d, want 1", attemptID)
+	}
+
+	events, err := repo.ListEvents(ctx, executionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(events) == 0 || events[len(events)-1].StepAttemptID != attemptID {
+		t.Fatalf("last event does not reference attempt %d", attemptID)
+	}
 }
