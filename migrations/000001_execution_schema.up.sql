@@ -1,9 +1,9 @@
 -- PandectRun execution persistence schema, version 1.
--- Runtime identifiers are repository-owned strings, matching the Go ID types.
+-- Execution IDs are UUIDs; step and attempt IDs are BIGINT identities.
 -- Workflow definitions remain outside this migration's scope.
 
 CREATE TABLE executions (
-    id TEXT PRIMARY KEY,
+    id UUID PRIMARY KEY,
     workflow_id TEXT NOT NULL,
     workflow_version INTEGER NOT NULL CHECK (workflow_version > 0),
     status TEXT NOT NULL DEFAULT 'pending'
@@ -24,8 +24,8 @@ CREATE TABLE executions (
 );
 
 CREATE TABLE step_executions (
-    id TEXT PRIMARY KEY,
-    execution_id TEXT NOT NULL REFERENCES executions(id) ON DELETE RESTRICT,
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    execution_id UUID NOT NULL REFERENCES executions(id) ON DELETE RESTRICT,
     step_id TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('pending', 'running', 'completed', 'failed', 'skipped', 'cancelled')),
@@ -44,8 +44,8 @@ CREATE TABLE step_executions (
 );
 
 CREATE TABLE step_attempts (
-    id TEXT PRIMARY KEY,
-    step_execution_id TEXT NOT NULL REFERENCES step_executions(id) ON DELETE RESTRICT,
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    step_execution_id BIGINT NOT NULL REFERENCES step_executions(id) ON DELETE RESTRICT,
     attempt INTEGER NOT NULL CHECK (attempt > 0),
     status TEXT NOT NULL DEFAULT 'running'
         CHECK (status IN ('running', 'completed', 'failed', 'cancelled')),
@@ -64,15 +64,15 @@ CREATE TABLE step_attempts (
 
 CREATE TABLE execution_events (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    execution_id TEXT NOT NULL REFERENCES executions(id) ON DELETE RESTRICT,
+    execution_id UUID NOT NULL REFERENCES executions(id) ON DELETE RESTRICT,
     type TEXT NOT NULL CHECK (type IN (
         'execution.created', 'execution.started', 'execution.cancel_requested',
         'execution.completed', 'execution.failed', 'execution.cancelled',
         'step.started', 'step.attempt_started', 'step.attempt_failed',
         'step.retry_scheduled', 'step.completed', 'step.failed', 'step.cancelled'
     )),
-    step_execution_id TEXT REFERENCES step_executions(id) ON DELETE RESTRICT,
-    step_attempt_id TEXT REFERENCES step_attempts(id) ON DELETE RESTRICT,
+    step_execution_id BIGINT REFERENCES step_executions(id) ON DELETE RESTRICT,
+    step_attempt_id BIGINT REFERENCES step_attempts(id) ON DELETE RESTRICT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT events_attempt_requires_step CHECK (
         step_attempt_id IS NULL OR step_execution_id IS NOT NULL
