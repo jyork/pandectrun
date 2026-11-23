@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"crypto/rand"
 	"fmt"
 	"sort"
 	"sync"
@@ -20,15 +21,14 @@ type MemoryExecutionRepository struct {
 	attempts   map[StepAttemptID]StepAttempt
 	events     map[ExecutionID][]ExecutionEvent
 
-	nextExecution uint64
-	nextStep      uint64
-	nextAttempt   uint64
+	nextStep      int64
+	nextAttempt   int64
 }
 
 var _ ExecutionRepository = (*MemoryExecutionRepository)(nil)
 
 // NewMemoryExecutionRepository returns an empty repository suitable for local
-// execution and tests. Runtime IDs are generated within this repository instance.
+// execution and tests. Execution IDs are UUIDs; step and attempt IDs are instance-local integers.
 //
 // Returns:
 //   - *MemoryExecutionRepository: a newly initialized, empty repository.
@@ -53,8 +53,10 @@ func NewMemoryExecutionRepository() *MemoryExecutionRepository {
 func (r *MemoryExecutionRepository) CreateExecution(_ context.Context, in NewExecution) (ExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.nextExecution++
-	id := ExecutionID(fmt.Sprintf("exec-%d", r.nextExecution))
+	id, err := newExecutionID()
+	if err != nil {
+		return "", fmt.Errorf("generate execution ID: %w", err)
+	}
 	now := time.Now().UTC()
 	r.executions[id] = Execution{ID: id, WorkflowID: in.WorkflowID, WorkflowVersion: in.WorkflowVersion, Status: ExecutionPending, Input: cloneRawMessage(in.Input), CreatedAt: now}
 	r.appendEventLocked(id, ExecutionEvent{ExecutionID: id, Type: EventExecutionCreated, CreatedAt: now})
@@ -282,10 +284,10 @@ func (r *MemoryExecutionRepository) CreateStepExecution(_ context.Context, in Ne
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.executions[in.ExecutionID]; !ok {
-		return "", ErrNotFound
+		return 0, ErrNotFound
 	}
 	r.nextStep++
-	id := StepExecutionID(fmt.Sprintf("step-%d", r.nextStep))
+	id := StepExecutionID(r.nextStep)
 	r.steps[id] = StepExecution{ID: id, ExecutionID: in.ExecutionID, StepID: in.StepID, Status: StepPending}
 	return id, nil
 }
@@ -470,13 +472,13 @@ func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewS
 	defer r.mu.Unlock()
 	s, ok := r.steps[in.StepExecutionID]
 	if !ok {
-		return "", ErrNotFound
+		return 0, ErrNotFound
 	}
 	if s.Status != StepRunning {
-		return "", transitionError("step", string(s.Status), "create attempt")
+		return 0, transitionError("step", string(s.Status), "create attempt")
 	}
 	r.nextAttempt++
-	id := StepAttemptID(fmt.Sprintf("attempt-%d", r.nextAttempt))
+	id := StepAttemptID(r.nextAttempt)
 	now := time.Now().UTC()
 	r.attempts[id] = StepAttempt{ID: id, StepExecutionID: in.StepExecutionID, Attempt: in.Attempt, Status: StepAttemptRunning, StartedAt: now}
 	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepAttemptStarted, StepExecutionID: s.ID, StepAttemptID: id, CreatedAt: now})
@@ -739,4 +741,22 @@ func cloneTime(t *time.Time) *time.Time {
 	}
 	c := *t
 	return &c
+}
+
+// newExecutionID generates a random RFC 4122 version 4 UUID without a third-party dependency.
+//
+// Returns:
+//   - ExecutionID: a lowercase, hyphenated UUID string.
+//   - error: an error if the operating system's cryptographic random source fails.
+func newExecutionID() (ExecutionID, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+
+	id[6] = (id[6] & 0x0f) | 0x40
+	id[8] = (id[8] & 0x3f) | 0x80
+
+	return ExecutionID(fmt.Sprintf("%x-%x-%x-%x-%x",
+		id[0:4], id[4:6], id[6:8], id[8:10], id[10:16])), nil
 }
