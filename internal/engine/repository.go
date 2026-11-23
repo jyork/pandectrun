@@ -42,7 +42,7 @@ type ExecutionEvent struct {
 }
 
 // ExecutionRepository persists execution, step, attempt, and event state through
-// lifecycle-oriented operations. Implementations own runtime IDs and lifecycle
+// lifecycle-oriented operations. Implementations own runtime IDs (UUID execution IDs and integer step/attempt IDs) and lifecycle
 // timestamps and must keep each state transition and its corresponding event atomic.
 type ExecutionRepository interface {
 	CreateExecution(context.Context, NewExecution) (ExecutionID, error)
