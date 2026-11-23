@@ -48,8 +48,10 @@ a coordinated lifecycle and event contract, not merely a database column.
 
 The v1 schema stores JSON as `jsonb`. SQL NULL represents an absent value;
 the future repository must explicitly handle JSON null versus SQL NULL.
-Repository-generated IDs remain `TEXT` to match the existing Go types;
-a future PostgreSQL implementation may generate UUID strings internally.
+Execution IDs use PostgreSQL `UUID`, corresponding to Go `ExecutionID string`.
+Step and attempt primary keys use `BIGINT GENERATED ALWAYS AS IDENTITY`,
+corresponding to distinct Go `int64` ID types. The repository must return
+generated integer IDs using `RETURNING id`.
 
 ## Verification
 
