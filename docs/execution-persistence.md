@@ -288,6 +288,23 @@ This is a design shape rather than a frozen Go API. Error return values and whet
 
 Execution relations may be added to this repository when they become executable behavior. The data model should leave room for them now without requiring the first scheduler integration to use them.
 
+## PostgreSQL schema and crash recovery
+
+The first PostgreSQL migration lives in [`migrations/`](../migrations/README.md)
+and covers executions, step executions, attempts, and append-only lifecycle
+events. The repository must commit each state transition and its event in one
+transaction; schema constraints alone cannot enforce transition ordering or
+immutable completed outputs.
+
+**Crash-recovery policy (initial): preserve and identify interrupted work,
+without automatic replay.** After a process restart, records left in
+`running` or `cancel_requested` are candidates for investigation, not proof
+that a worker has stopped. A future inspection/recovery mechanism will use
+ownership or heartbeat information to distinguish genuinely abandoned work
+from still-active work. It must not silently re-run steps with external side
+effects. No new lifecycle status is introduced until its transition and event
+semantics are defined.
+
 ## Atomic lifecycle operations
 
 State transitions and their corresponding events must not be independently persisted when they describe one logical operation.
