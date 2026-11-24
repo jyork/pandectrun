@@ -1,43 +1,45 @@
-package engine
+package memory
 
 import (
 	"context"
 	"encoding/json"
-	"uuid"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
+	"uuid"
+
+	"github.com/jyork/pandectrun/internal/engine"
 )
 
-// MemoryExecutionRepository is an in-memory ExecutionRepository implementation.
+// ExecutionRepository is an in-memory ExecutionRepository implementation.
 // It serializes mutations with a mutex so lifecycle state and emitted events are
 // updated atomically, matching the transaction boundary expected from durable stores.
-type MemoryExecutionRepository struct {
+type ExecutionRepository struct {
 	mu sync.RWMutex
 
-	executions map[ExecutionID]Execution
-	steps      map[StepExecutionID]StepExecution
-	attempts   map[StepAttemptID]StepAttempt
-	events     map[ExecutionID][]ExecutionEvent
+	executions map[engine.ExecutionID]engine.Execution
+	steps      map[engine.StepExecutionID]engine.StepExecution
+	attempts   map[engine.StepAttemptID]engine.StepAttempt
+	events     map[engine.ExecutionID][]engine.ExecutionEvent
 
-	nextStep      int64
-	nextAttempt   int64
+	nextStep    int64
+	nextAttempt int64
 }
 
-var _ ExecutionRepository = (*MemoryExecutionRepository)(nil)
+var _ engine.ExecutionRepository = (*ExecutionRepository)(nil)
 
-// NewMemoryExecutionRepository returns an empty repository suitable for local
+// NewExecutionRepository returns an empty repository suitable for local
 // execution and tests. Execution IDs are UUIDs; step and attempt IDs are instance-local integers.
 //
 // Returns:
-//   - *MemoryExecutionRepository: a newly initialized, empty repository.
-func NewMemoryExecutionRepository() *MemoryExecutionRepository {
-	return &MemoryExecutionRepository{
-		executions: make(map[ExecutionID]Execution),
-		steps:      make(map[StepExecutionID]StepExecution),
-		attempts:   make(map[StepAttemptID]StepAttempt),
-		events:     make(map[ExecutionID][]ExecutionEvent),
+//   - *ExecutionRepository: a newly initialized, empty repository.
+func NewExecutionRepository() *ExecutionRepository {
+	return &ExecutionRepository{
+		executions: make(map[engine.ExecutionID]engine.Execution),
+		steps:      make(map[engine.StepExecutionID]engine.StepExecution),
+		attempts:   make(map[engine.StepAttemptID]engine.StepAttempt),
+		events:     make(map[engine.ExecutionID][]engine.ExecutionEvent),
 	}
 }
 
@@ -50,13 +52,13 @@ func NewMemoryExecutionRepository() *MemoryExecutionRepository {
 // Returns:
 //   - ExecutionID: the repository-assigned ID of the new execution.
 //   - error: nil on success; otherwise an error preventing creation.
-func (r *MemoryExecutionRepository) CreateExecution(_ context.Context, in NewExecution) (ExecutionID, error) {
+func (r *ExecutionRepository) CreateExecution(_ context.Context, in engine.NewExecution) (engine.ExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	id := ExecutionID(uuid.NewV4().String())
+	id := engine.ExecutionID(uuid.NewV4().String())
 	now := time.Now().UTC()
-	r.executions[id] = Execution{ID: id, WorkflowID: in.WorkflowID, WorkflowVersion: in.WorkflowVersion, Status: ExecutionPending, Input: cloneRawMessage(in.Input), CreatedAt: now}
-	r.appendEventLocked(id, ExecutionEvent{ExecutionID: id, Type: EventExecutionCreated, CreatedAt: now})
+	r.executions[id] = engine.Execution{ID: id, WorkflowID: in.WorkflowID, WorkflowVersion: in.WorkflowVersion, Status: engine.ExecutionPending, Input: cloneRawMessage(in.Input), CreatedAt: now}
+	r.appendEventLocked(id, engine.ExecutionEvent{ExecutionID: id, Type: engine.EventExecutionCreated, CreatedAt: now})
 	return id, nil
 }
 
@@ -69,12 +71,12 @@ func (r *MemoryExecutionRepository) CreateExecution(_ context.Context, in NewExe
 // Returns:
 //   - Execution: a detached copy of the persisted execution.
 //   - error: nil on success, or ErrNotFound when id does not exist.
-func (r *MemoryExecutionRepository) GetExecution(_ context.Context, id ExecutionID) (Execution, error) {
+func (r *ExecutionRepository) GetExecution(_ context.Context, id engine.ExecutionID) (engine.Execution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.executions[id]
 	if !ok {
-		return Execution{}, ErrNotFound
+		return engine.Execution{}, engine.ErrNotFound
 	}
 	return cloneExecution(e), nil
 }
@@ -88,14 +90,14 @@ func (r *MemoryExecutionRepository) GetExecution(_ context.Context, id Execution
 // Returns:
 //   - []Execution: detached execution records matching q in deterministic order.
 //   - error: nil on success.
-func (r *MemoryExecutionRepository) ListExecutions(_ context.Context, q ExecutionQuery) ([]Execution, error) {
+func (r *ExecutionRepository) ListExecutions(_ context.Context, q engine.ExecutionQuery) ([]engine.Execution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	statuses := make(map[ExecutionStatus]struct{}, len(q.Status))
+	statuses := make(map[engine.ExecutionStatus]struct{}, len(q.Status))
 	for _, s := range q.Status {
 		statuses[s] = struct{}{}
 	}
-	out := make([]Execution, 0)
+	out := make([]engine.Execution, 0)
 	for _, e := range r.executions {
 		if q.WorkflowID != "" && e.WorkflowID != q.WorkflowID {
 			continue
@@ -128,21 +130,21 @@ func (r *MemoryExecutionRepository) ListExecutions(_ context.Context, q Executio
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the execution is not pending.
-func (r *MemoryExecutionRepository) StartExecution(_ context.Context, id ExecutionID) error {
+func (r *ExecutionRepository) StartExecution(_ context.Context, id engine.ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.executions[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if e.Status != ExecutionPending {
-		return transitionError("execution", string(e.Status), string(ExecutionRunning))
+	if e.Status != engine.ExecutionPending {
+		return transitionError("execution", string(e.Status), string(engine.ExecutionRunning))
 	}
 	now := time.Now().UTC()
-	e.Status = ExecutionRunning
+	e.Status = engine.ExecutionRunning
 	e.StartedAt = &now
 	r.executions[id] = e
-	r.appendEventLocked(id, ExecutionEvent{ExecutionID: id, Type: EventExecutionStarted, CreatedAt: now})
+	r.appendEventLocked(id, engine.ExecutionEvent{ExecutionID: id, Type: engine.EventExecutionStarted, CreatedAt: now})
 	return nil
 }
 
@@ -156,8 +158,8 @@ func (r *MemoryExecutionRepository) StartExecution(_ context.Context, id Executi
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the execution cannot transition to completed.
-func (r *MemoryExecutionRepository) CompleteExecution(_ context.Context, id ExecutionID, output json.RawMessage) error {
-	return r.finishExecution(id, ExecutionCompleted, output, nil, EventExecutionCompleted)
+func (r *ExecutionRepository) CompleteExecution(_ context.Context, id engine.ExecutionID, output json.RawMessage) error {
+	return r.finishExecution(id, engine.ExecutionCompleted, output, nil, engine.EventExecutionCompleted)
 }
 
 // FailExecution transitions a running or cancel-requested execution to failed,
@@ -170,8 +172,8 @@ func (r *MemoryExecutionRepository) CompleteExecution(_ context.Context, id Exec
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the execution cannot transition to failed.
-func (r *MemoryExecutionRepository) FailExecution(_ context.Context, id ExecutionID, execErr ExecutionError) error {
-	return r.finishExecution(id, ExecutionFailed, nil, &execErr, EventExecutionFailed)
+func (r *ExecutionRepository) FailExecution(_ context.Context, id engine.ExecutionID, execErr engine.ExecutionError) error {
+	return r.finishExecution(id, engine.ExecutionFailed, nil, &execErr, engine.EventExecutionFailed)
 }
 
 // finishExecution applies a terminal execution transition and its event while
@@ -187,14 +189,14 @@ func (r *MemoryExecutionRepository) FailExecution(_ context.Context, id Executio
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the current state cannot reach status.
-func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status ExecutionStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
+func (r *ExecutionRepository) finishExecution(id engine.ExecutionID, status engine.ExecutionStatus, output json.RawMessage, execErr *engine.ExecutionError, eventType engine.ExecutionEventType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.executions[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if e.Status != ExecutionRunning && e.Status != ExecutionCancelRequested {
+	if e.Status != engine.ExecutionRunning && e.Status != engine.ExecutionCancelRequested {
 		return transitionError("execution", string(e.Status), string(status))
 	}
 	now := time.Now().UTC()
@@ -203,7 +205,7 @@ func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status Execu
 	e.Error = cloneExecutionError(execErr)
 	e.CompletedAt = &now
 	r.executions[id] = e
-	r.appendEventLocked(id, ExecutionEvent{ExecutionID: id, Type: eventType, CreatedAt: now})
+	r.appendEventLocked(id, engine.ExecutionEvent{ExecutionID: id, Type: eventType, CreatedAt: now})
 	return nil
 }
 
@@ -217,23 +219,23 @@ func (r *MemoryExecutionRepository) finishExecution(id ExecutionID, status Execu
 //   - error: nil when cancellation is requested or already effective,
 //     ErrNotFound when id does not exist, or ErrInvalidTransition when the
 //     execution is already in another terminal state.
-func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id ExecutionID) error {
+func (r *ExecutionRepository) RequestCancellation(_ context.Context, id engine.ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.executions[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if e.Status == ExecutionCancelRequested || e.Status == ExecutionCancelled {
+	if e.Status == engine.ExecutionCancelRequested || e.Status == engine.ExecutionCancelled {
 		return nil
 	}
-	if e.Status != ExecutionPending && e.Status != ExecutionRunning {
-		return transitionError("execution", string(e.Status), string(ExecutionCancelRequested))
+	if e.Status != engine.ExecutionPending && e.Status != engine.ExecutionRunning {
+		return transitionError("execution", string(e.Status), string(engine.ExecutionCancelRequested))
 	}
 	now := time.Now().UTC()
-	e.Status = ExecutionCancelRequested
+	e.Status = engine.ExecutionCancelRequested
 	r.executions[id] = e
-	r.appendEventLocked(id, ExecutionEvent{ExecutionID: id, Type: EventExecutionCancelRequested, CreatedAt: now})
+	r.appendEventLocked(id, engine.ExecutionEvent{ExecutionID: id, Type: engine.EventExecutionCancelRequested, CreatedAt: now})
 	return nil
 }
 
@@ -247,24 +249,24 @@ func (r *MemoryExecutionRepository) RequestCancellation(_ context.Context, id Ex
 //   - error: nil when cancellation is completed or already complete,
 //     ErrNotFound when id does not exist, or ErrInvalidTransition when the
 //     execution is not cancel-requested.
-func (r *MemoryExecutionRepository) CompleteCancellation(_ context.Context, id ExecutionID) error {
+func (r *ExecutionRepository) CompleteCancellation(_ context.Context, id engine.ExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	e, ok := r.executions[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if e.Status == ExecutionCancelled {
+	if e.Status == engine.ExecutionCancelled {
 		return nil
 	}
-	if e.Status != ExecutionCancelRequested {
-		return transitionError("execution", string(e.Status), string(ExecutionCancelled))
+	if e.Status != engine.ExecutionCancelRequested {
+		return transitionError("execution", string(e.Status), string(engine.ExecutionCancelled))
 	}
 	now := time.Now().UTC()
-	e.Status = ExecutionCancelled
+	e.Status = engine.ExecutionCancelled
 	e.CompletedAt = &now
 	r.executions[id] = e
-	r.appendEventLocked(id, ExecutionEvent{ExecutionID: id, Type: EventExecutionCancelled, CreatedAt: now})
+	r.appendEventLocked(id, engine.ExecutionEvent{ExecutionID: id, Type: engine.EventExecutionCancelled, CreatedAt: now})
 	return nil
 }
 
@@ -277,15 +279,15 @@ func (r *MemoryExecutionRepository) CompleteCancellation(_ context.Context, id E
 // Returns:
 //   - StepExecutionID: the repository-assigned ID of the new step execution.
 //   - error: nil on success, or ErrNotFound when the parent execution does not exist.
-func (r *MemoryExecutionRepository) CreateStepExecution(_ context.Context, in NewStepExecution) (StepExecutionID, error) {
+func (r *ExecutionRepository) CreateStepExecution(_ context.Context, in engine.NewStepExecution) (engine.StepExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.executions[in.ExecutionID]; !ok {
-		return 0, ErrNotFound
+		return 0, engine.ErrNotFound
 	}
 	r.nextStep++
-	id := StepExecutionID(r.nextStep)
-	r.steps[id] = StepExecution{ID: id, ExecutionID: in.ExecutionID, StepID: in.StepID, Status: StepPending}
+	id := engine.StepExecutionID(r.nextStep)
+	r.steps[id] = engine.StepExecution{ID: id, ExecutionID: in.ExecutionID, StepID: in.StepID, Status: engine.StepPending}
 	return id, nil
 }
 
@@ -298,12 +300,12 @@ func (r *MemoryExecutionRepository) CreateStepExecution(_ context.Context, in Ne
 // Returns:
 //   - StepExecution: a detached copy of the persisted step execution.
 //   - error: nil on success, or ErrNotFound when id does not exist.
-func (r *MemoryExecutionRepository) GetStepExecution(_ context.Context, id StepExecutionID) (StepExecution, error) {
+func (r *ExecutionRepository) GetStepExecution(_ context.Context, id engine.StepExecutionID) (engine.StepExecution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	s, ok := r.steps[id]
 	if !ok {
-		return StepExecution{}, ErrNotFound
+		return engine.StepExecution{}, engine.ErrNotFound
 	}
 	return cloneStepExecution(s), nil
 }
@@ -317,13 +319,13 @@ func (r *MemoryExecutionRepository) GetStepExecution(_ context.Context, id StepE
 // Returns:
 //   - []StepExecution: detached step executions in deterministic ID order.
 //   - error: nil on success, or ErrNotFound when executionID does not exist.
-func (r *MemoryExecutionRepository) ListStepExecutions(_ context.Context, executionID ExecutionID) ([]StepExecution, error) {
+func (r *ExecutionRepository) ListStepExecutions(_ context.Context, executionID engine.ExecutionID) ([]engine.StepExecution, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if _, ok := r.executions[executionID]; !ok {
-		return nil, ErrNotFound
+		return nil, engine.ErrNotFound
 	}
-	out := make([]StepExecution, 0)
+	out := make([]engine.StepExecution, 0)
 	for _, s := range r.steps {
 		if s.ExecutionID == executionID {
 			out = append(out, cloneStepExecution(s))
@@ -344,21 +346,21 @@ func (r *MemoryExecutionRepository) ListStepExecutions(_ context.Context, execut
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the step is not pending.
-func (r *MemoryExecutionRepository) StartStep(_ context.Context, id StepExecutionID) error {
+func (r *ExecutionRepository) StartStep(_ context.Context, id engine.StepExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.steps[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if s.Status != StepPending {
-		return transitionError("step", string(s.Status), string(StepRunning))
+	if s.Status != engine.StepPending {
+		return transitionError("step", string(s.Status), string(engine.StepRunning))
 	}
 	now := time.Now().UTC()
-	s.Status = StepRunning
+	s.Status = engine.StepRunning
 	s.StartedAt = &now
 	r.steps[id] = s
-	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepStarted, StepExecutionID: id, CreatedAt: now})
+	r.appendEventLocked(s.ExecutionID, engine.ExecutionEvent{ExecutionID: s.ExecutionID, Type: engine.EventStepStarted, StepExecutionID: id, CreatedAt: now})
 	return nil
 }
 
@@ -372,8 +374,8 @@ func (r *MemoryExecutionRepository) StartStep(_ context.Context, id StepExecutio
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the step is not running.
-func (r *MemoryExecutionRepository) CompleteStep(_ context.Context, id StepExecutionID, output json.RawMessage) error {
-	return r.finishStep(id, StepCompleted, output, nil, EventStepCompleted)
+func (r *ExecutionRepository) CompleteStep(_ context.Context, id engine.StepExecutionID, output json.RawMessage) error {
+	return r.finishStep(id, engine.StepCompleted, output, nil, engine.EventStepCompleted)
 }
 
 // FailStep transitions a running step to failed, persists its terminal error,
@@ -386,8 +388,8 @@ func (r *MemoryExecutionRepository) CompleteStep(_ context.Context, id StepExecu
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the step is not running.
-func (r *MemoryExecutionRepository) FailStep(_ context.Context, id StepExecutionID, execErr ExecutionError) error {
-	return r.finishStep(id, StepFailed, nil, &execErr, EventStepFailed)
+func (r *ExecutionRepository) FailStep(_ context.Context, id engine.StepExecutionID, execErr engine.ExecutionError) error {
+	return r.finishStep(id, engine.StepFailed, nil, &execErr, engine.EventStepFailed)
 }
 
 // CancelStep transitions a pending or running step to cancelled and emits
@@ -400,24 +402,24 @@ func (r *MemoryExecutionRepository) FailStep(_ context.Context, id StepExecution
 //   - error: nil when cancellation succeeds or is already complete,
 //     ErrNotFound when id does not exist, or ErrInvalidTransition when the
 //     step is in another terminal state.
-func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecutionID) error {
+func (r *ExecutionRepository) CancelStep(_ context.Context, id engine.StepExecutionID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.steps[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if s.Status == StepCancelled {
+	if s.Status == engine.StepCancelled {
 		return nil
 	}
-	if s.Status != StepPending && s.Status != StepRunning {
-		return transitionError("step", string(s.Status), string(StepCancelled))
+	if s.Status != engine.StepPending && s.Status != engine.StepRunning {
+		return transitionError("step", string(s.Status), string(engine.StepCancelled))
 	}
 	now := time.Now().UTC()
-	s.Status = StepCancelled
+	s.Status = engine.StepCancelled
 	s.CompletedAt = &now
 	r.steps[id] = s
-	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepCancelled, StepExecutionID: id, CreatedAt: now})
+	r.appendEventLocked(s.ExecutionID, engine.ExecutionEvent{ExecutionID: s.ExecutionID, Type: engine.EventStepCancelled, StepExecutionID: id, CreatedAt: now})
 	return nil
 }
 
@@ -434,14 +436,14 @@ func (r *MemoryExecutionRepository) CancelStep(_ context.Context, id StepExecuti
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the current state cannot reach status.
-func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepStatus, output json.RawMessage, execErr *ExecutionError, eventType ExecutionEventType) error {
+func (r *ExecutionRepository) finishStep(id engine.StepExecutionID, status engine.StepStatus, output json.RawMessage, execErr *engine.ExecutionError, eventType engine.ExecutionEventType) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.steps[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if s.Status != StepRunning {
+	if s.Status != engine.StepRunning {
 		return transitionError("step", string(s.Status), string(status))
 	}
 	now := time.Now().UTC()
@@ -450,7 +452,7 @@ func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepSt
 	s.Error = cloneExecutionError(execErr)
 	s.CompletedAt = &now
 	r.steps[id] = s
-	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: eventType, StepExecutionID: id, CreatedAt: now})
+	r.appendEventLocked(s.ExecutionID, engine.ExecutionEvent{ExecutionID: s.ExecutionID, Type: eventType, StepExecutionID: id, CreatedAt: now})
 	return nil
 }
 
@@ -464,21 +466,21 @@ func (r *MemoryExecutionRepository) finishStep(id StepExecutionID, status StepSt
 //   - StepAttemptID: the repository-assigned ID of the running attempt.
 //   - error: nil on success, ErrNotFound when the parent step does not exist,
 //     or ErrInvalidTransition when the parent step is not running.
-func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewStepAttempt) (StepAttemptID, error) {
+func (r *ExecutionRepository) CreateStepAttempt(_ context.Context, in engine.NewStepAttempt) (engine.StepAttemptID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	s, ok := r.steps[in.StepExecutionID]
 	if !ok {
-		return 0, ErrNotFound
+		return 0, engine.ErrNotFound
 	}
-	if s.Status != StepRunning {
+	if s.Status != engine.StepRunning {
 		return 0, transitionError("step", string(s.Status), "create attempt")
 	}
 	r.nextAttempt++
-	id := StepAttemptID(r.nextAttempt)
+	id := engine.StepAttemptID(r.nextAttempt)
 	now := time.Now().UTC()
-	r.attempts[id] = StepAttempt{ID: id, StepExecutionID: in.StepExecutionID, Attempt: in.Attempt, Status: StepAttemptRunning, StartedAt: now}
-	r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepAttemptStarted, StepExecutionID: s.ID, StepAttemptID: id, CreatedAt: now})
+	r.attempts[id] = engine.StepAttempt{ID: id, StepExecutionID: in.StepExecutionID, Attempt: in.Attempt, Status: engine.StepAttemptRunning, StartedAt: now}
+	r.appendEventLocked(s.ExecutionID, engine.ExecutionEvent{ExecutionID: s.ExecutionID, Type: engine.EventStepAttemptStarted, StepExecutionID: s.ID, StepAttemptID: id, CreatedAt: now})
 	return id, nil
 }
 
@@ -490,8 +492,8 @@ func (r *MemoryExecutionRepository) CreateStepAttempt(_ context.Context, in NewS
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the attempt is not running.
-func (r *MemoryExecutionRepository) CompleteStepAttempt(_ context.Context, id StepAttemptID) error {
-	return r.finishAttempt(id, StepAttemptCompleted, nil)
+func (r *ExecutionRepository) CompleteStepAttempt(_ context.Context, id engine.StepAttemptID) error {
+	return r.finishAttempt(id, engine.StepAttemptCompleted, nil)
 }
 
 // FailStepAttempt transitions a running attempt to failed, persists its error,
@@ -504,8 +506,8 @@ func (r *MemoryExecutionRepository) CompleteStepAttempt(_ context.Context, id St
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the attempt is not running.
-func (r *MemoryExecutionRepository) FailStepAttempt(_ context.Context, id StepAttemptID, execErr ExecutionError) error {
-	return r.finishAttempt(id, StepAttemptFailed, &execErr)
+func (r *ExecutionRepository) FailStepAttempt(_ context.Context, id engine.StepAttemptID, execErr engine.ExecutionError) error {
+	return r.finishAttempt(id, engine.StepAttemptFailed, &execErr)
 }
 
 // RecordStepRetryScheduled records that another attempt will be made after the
@@ -517,27 +519,27 @@ func (r *MemoryExecutionRepository) FailStepAttempt(_ context.Context, id StepAt
 // Returns:
 //   - error: nil on success, ErrNotFound when the attempt or parent step does
 //     not exist, or ErrInvalidTransition when the attempt is not failed.
-func (r *MemoryExecutionRepository) RecordStepRetryScheduled(_ context.Context, id StepAttemptID) error {
+func (r *ExecutionRepository) RecordStepRetryScheduled(_ context.Context, id engine.StepAttemptID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	attempt, ok := r.attempts[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if attempt.Status != StepAttemptFailed {
+	if attempt.Status != engine.StepAttemptFailed {
 		return transitionError("step attempt", string(attempt.Status), "retry scheduled")
 	}
 
 	step, ok := r.steps[attempt.StepExecutionID]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
 
 	now := time.Now().UTC()
-	r.appendEventLocked(step.ExecutionID, ExecutionEvent{
+	r.appendEventLocked(step.ExecutionID, engine.ExecutionEvent{
 		ExecutionID:     step.ExecutionID,
-		Type:            EventStepRetryScheduled,
+		Type:            engine.EventStepRetryScheduled,
 		StepExecutionID: step.ID,
 		StepAttemptID:   id,
 		CreatedAt:       now,
@@ -555,8 +557,8 @@ func (r *MemoryExecutionRepository) RecordStepRetryScheduled(_ context.Context, 
 //   - error: nil when cancellation succeeds or is already complete,
 //     ErrNotFound when id does not exist, or ErrInvalidTransition when the
 //     attempt is in another terminal state.
-func (r *MemoryExecutionRepository) CancelStepAttempt(_ context.Context, id StepAttemptID) error {
-	return r.finishAttempt(id, StepAttemptCancelled, nil)
+func (r *ExecutionRepository) CancelStepAttempt(_ context.Context, id engine.StepAttemptID) error {
+	return r.finishAttempt(id, engine.StepAttemptCancelled, nil)
 }
 
 // finishAttempt applies a terminal attempt transition. Failed attempts also emit
@@ -570,17 +572,17 @@ func (r *MemoryExecutionRepository) CancelStepAttempt(_ context.Context, id Step
 // Returns:
 //   - error: nil on success, ErrNotFound when id does not exist, or
 //     ErrInvalidTransition when the attempt is not running.
-func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepAttemptStatus, execErr *ExecutionError) error {
+func (r *ExecutionRepository) finishAttempt(id engine.StepAttemptID, status engine.StepAttemptStatus, execErr *engine.ExecutionError) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	a, ok := r.attempts[id]
 	if !ok {
-		return ErrNotFound
+		return engine.ErrNotFound
 	}
-	if a.Status == status && status == StepAttemptCancelled {
+	if a.Status == status && status == engine.StepAttemptCancelled {
 		return nil
 	}
-	if a.Status != StepAttemptRunning {
+	if a.Status != engine.StepAttemptRunning {
 		return transitionError("step attempt", string(a.Status), string(status))
 	}
 	s := r.steps[a.StepExecutionID]
@@ -589,8 +591,8 @@ func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepA
 	a.Error = cloneExecutionError(execErr)
 	a.CompletedAt = &now
 	r.attempts[id] = a
-	if status == StepAttemptFailed {
-		r.appendEventLocked(s.ExecutionID, ExecutionEvent{ExecutionID: s.ExecutionID, Type: EventStepAttemptFailed, StepExecutionID: s.ID, StepAttemptID: id, CreatedAt: now})
+	if status == engine.StepAttemptFailed {
+		r.appendEventLocked(s.ExecutionID, engine.ExecutionEvent{ExecutionID: s.ExecutionID, Type: engine.EventStepAttemptFailed, StepExecutionID: s.ID, StepAttemptID: id, CreatedAt: now})
 	}
 	return nil
 }
@@ -604,13 +606,13 @@ func (r *MemoryExecutionRepository) finishAttempt(id StepAttemptID, status StepA
 // Returns:
 //   - []StepAttempt: detached attempts ordered by one-based attempt number.
 //   - error: nil on success, or ErrNotFound when stepID does not exist.
-func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID StepExecutionID) ([]StepAttempt, error) {
+func (r *ExecutionRepository) ListStepAttempts(_ context.Context, stepID engine.StepExecutionID) ([]engine.StepAttempt, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if _, ok := r.steps[stepID]; !ok {
-		return nil, ErrNotFound
+		return nil, engine.ErrNotFound
 	}
-	out := make([]StepAttempt, 0)
+	out := make([]engine.StepAttempt, 0)
 	for _, a := range r.attempts {
 		if a.StepExecutionID == stepID {
 			out = append(out, cloneStepAttempt(a))
@@ -631,13 +633,13 @@ func (r *MemoryExecutionRepository) ListStepAttempts(_ context.Context, stepID S
 // Returns:
 //   - []ExecutionEvent: a copy of the execution's chronological event history.
 //   - error: nil on success, or ErrNotFound when executionID does not exist.
-func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID ExecutionID) ([]ExecutionEvent, error) {
+func (r *ExecutionRepository) ListEvents(_ context.Context, executionID engine.ExecutionID) ([]engine.ExecutionEvent, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	if _, ok := r.executions[executionID]; !ok {
-		return nil, ErrNotFound
+		return nil, engine.ErrNotFound
 	}
-	return append([]ExecutionEvent(nil), r.events[executionID]...), nil
+	return append([]engine.ExecutionEvent(nil), r.events[executionID]...), nil
 }
 
 // appendEventLocked appends an event while the caller holds r.mu for writing.
@@ -648,7 +650,7 @@ func (r *MemoryExecutionRepository) ListEvents(_ context.Context, executionID Ex
 //
 // Returns:
 //   - none.
-func (r *MemoryExecutionRepository) appendEventLocked(id ExecutionID, event ExecutionEvent) {
+func (r *ExecutionRepository) appendEventLocked(id engine.ExecutionID, event engine.ExecutionEvent) {
 	r.events[id] = append(r.events[id], event)
 }
 
@@ -662,7 +664,7 @@ func (r *MemoryExecutionRepository) appendEventLocked(id ExecutionID, event Exec
 // Returns:
 //   - error: ErrInvalidTransition wrapped with the rejected state change.
 func transitionError(entity, from, to string) error {
-	return fmt.Errorf("%w: %s %s -> %s", ErrInvalidTransition, entity, from, to)
+	return fmt.Errorf("%w: %s %s -> %s", engine.ErrInvalidTransition, entity, from, to)
 }
 
 // cloneExecution returns an execution whose mutable byte slices and pointer fields
@@ -673,7 +675,7 @@ func transitionError(entity, from, to string) error {
 //
 // Returns:
 //   - Execution: a copy whose mutable fields do not alias e's mutable storage.
-func cloneExecution(e Execution) Execution {
+func cloneExecution(e engine.Execution) engine.Execution {
 	e.Input = cloneRawMessage(e.Input)
 	e.Output = cloneRawMessage(e.Output)
 	e.Error = cloneExecutionError(e.Error)
@@ -689,7 +691,7 @@ func cloneExecution(e Execution) Execution {
 //
 // Returns:
 //   - StepExecution: a copy whose mutable fields do not alias s's mutable storage.
-func cloneStepExecution(s StepExecution) StepExecution {
+func cloneStepExecution(s engine.StepExecution) engine.StepExecution {
 	s.Output = cloneRawMessage(s.Output)
 	s.Error = cloneExecutionError(s.Error)
 	s.StartedAt = cloneTime(s.StartedAt)
@@ -704,7 +706,7 @@ func cloneStepExecution(s StepExecution) StepExecution {
 //
 // Returns:
 //   - StepAttempt: a copy whose mutable fields do not alias a's mutable storage.
-func cloneStepAttempt(a StepAttempt) StepAttempt {
+func cloneStepAttempt(a engine.StepAttempt) engine.StepAttempt {
 	a.Error = cloneExecutionError(a.Error)
 	a.CompletedAt = cloneTime(a.CompletedAt)
 	return a
@@ -717,7 +719,7 @@ func cloneStepAttempt(a StepAttempt) StepAttempt {
 //
 // Returns:
 //   - *ExecutionError: an independent copy of e, or nil when e is nil.
-func cloneExecutionError(e *ExecutionError) *ExecutionError {
+func cloneExecutionError(e *engine.ExecutionError) *engine.ExecutionError {
 	if e == nil {
 		return nil
 	}
@@ -738,4 +740,14 @@ func cloneTime(t *time.Time) *time.Time {
 	}
 	c := *t
 	return &c
+}
+
+// cloneRawMessage returns an independent copy of value, preserving nil.
+func cloneRawMessage(value json.RawMessage) json.RawMessage {
+	if value == nil {
+		return nil
+	}
+	copyValue := make(json.RawMessage, len(value))
+	copy(copyValue, value)
+	return copyValue
 }

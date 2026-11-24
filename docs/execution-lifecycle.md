@@ -157,7 +157,7 @@ flowchart TB
     S[Scheduler]
     REG[Step Registry]
     REPO[ExecutionRepository]
-    MEM[MemoryExecutionRepository]
+    MEM[memory.ExecutionRepository]
     PG[PostgreSQL Repository<br/>later]
     STEP[Step Implementation]
 
