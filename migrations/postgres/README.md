@@ -24,8 +24,8 @@ it does not import the standalone container's data.
 Apply the schema once and run the smoke test without installing psql locally:
 
 ```bash
-docker compose exec -T postgres psql -U pandectrun -d pandectrun -v ON_ERROR_STOP=1 -1 < migrations/000001_execution_schema.up.sql
-docker compose exec -T postgres psql -U pandectrun -d pandectrun -v ON_ERROR_STOP=1 < migrations/test_execution_schema.sql
+docker compose exec -T postgres psql -U pandectrun -d pandectrun -v ON_ERROR_STOP=1 -1 < migrations/postgres/000001_execution_schema.up.sql
+docker compose exec -T postgres psql -U pandectrun -d pandectrun -v ON_ERROR_STOP=1 < migrations/postgres/test_execution_schema.sql
 ```
 
 Stop and remove the service with `docker compose down`. The database volume
@@ -40,13 +40,13 @@ are intentionally applied explicitly rather than automatically on startup.
 Version 1 is a single transactional migration. From the repository root:
 
 ```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f migrations/000001_execution_schema.up.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f migrations/postgres/000001_execution_schema.up.sql
 ```
 
 For a disposable development database, the rollback is:
 
 ```bash
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f migrations/000001_execution_schema.down.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f migrations/postgres/000001_execution_schema.down.sql
 ```
 
 The SQL is deliberately plain PostgreSQL, without a migration library. The
@@ -89,5 +89,5 @@ generated integer IDs using `RETURNING id`.
 ## Verification
 
 Apply the up migration in a fresh PostgreSQL database, run the smoke-test SQL
-in `migrations/test_execution_schema.sql` in a rollback-only transaction, and
+in `migrations/postgres/test_execution_schema.sql` in a rollback-only transaction, and
 verify the down migration in a disposable database.

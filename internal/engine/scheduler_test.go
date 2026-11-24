@@ -1,4 +1,4 @@
-package engine
+package engine_test
 
 import (
 	"context"
@@ -7,15 +7,18 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/jyork/pandectrun/internal/engine"
+	"github.com/jyork/pandectrun/internal/persistence/memory"
 )
 
 type recordingStep struct {
 	order *[]string
 }
 
-func (s recordingStep) Execute(_ context.Context, input StepInput) (StepResult, error) {
+func (s recordingStep) Execute(_ context.Context, input engine.StepInput) (engine.StepResult, error) {
 	*s.order = append(*s.order, input.Step.ID)
-	return StepResult{Output: json.RawMessage(fmt.Sprintf(`{"step":%q}`, input.Step.ID))}, nil
+	return engine.StepResult{Output: json.RawMessage(fmt.Sprintf(`{"step":%q}`, input.Step.ID))}, nil
 }
 
 type failingStep struct{}
@@ -24,21 +27,21 @@ type retryThenSucceedStep struct {
 	attempts int
 }
 
-func (s *retryThenSucceedStep) Execute(context.Context, StepInput) (StepResult, error) {
+func (s *retryThenSucceedStep) Execute(context.Context, engine.StepInput) (engine.StepResult, error) {
 	s.attempts++
 	if s.attempts < 3 {
-		return StepResult{}, fmt.Errorf("transient failure %d", s.attempts)
+		return engine.StepResult{}, fmt.Errorf("transient failure %d", s.attempts)
 	}
-	return StepResult{Output: json.RawMessage(`{"ok":true}`)}, nil
+	return engine.StepResult{Output: json.RawMessage(`{"ok":true}`)}, nil
 }
 
 type permanentFailingStep struct {
 	attempts int
 }
 
-func (s *permanentFailingStep) Execute(context.Context, StepInput) (StepResult, error) {
+func (s *permanentFailingStep) Execute(context.Context, engine.StepInput) (engine.StepResult, error) {
 	s.attempts++
-	return StepResult{}, Permanent(fmt.Errorf("invalid request"))
+	return engine.StepResult{}, engine.Permanent(fmt.Errorf("invalid request"))
 }
 
 // IsRetryable deliberately returns true to verify that explicit permanent
@@ -52,35 +55,35 @@ type classifyingStep struct {
 	retry    bool
 }
 
-func (s *classifyingStep) Execute(context.Context, StepInput) (StepResult, error) {
+func (s *classifyingStep) Execute(context.Context, engine.StepInput) (engine.StepResult, error) {
 	s.attempts++
-	return StepResult{}, fmt.Errorf("classified failure")
+	return engine.StepResult{}, fmt.Errorf("classified failure")
 }
 
 func (s *classifyingStep) IsRetryable(error) bool {
 	return s.retry
 }
 
-func (failingStep) Execute(context.Context, StepInput) (StepResult, error) {
-	return StepResult{}, fmt.Errorf("boom")
+func (failingStep) Execute(context.Context, engine.StepInput) (engine.StepResult, error) {
+	return engine.StepResult{}, fmt.Errorf("boom")
 }
 
 func TestSchedulerExecutesDAGSequentiallyAndPersistsHistory(t *testing.T) {
 	var order []string
-	registry := NewRegistry()
+	registry := engine.NewRegistry()
 	if err := registry.Register("record", recordingStep{order: &order}); err != nil {
 		t.Fatal(err)
 	}
-	repo := NewMemoryExecutionRepository()
+	repo := memory.NewExecutionRepository()
 
-	def := WorkflowDefinition{ID: "wf", Version: 1, Steps: []StepDefinition{
+	def := engine.WorkflowDefinition{ID: "wf", Version: 1, Steps: []engine.StepDefinition{
 		{ID: "validate", Type: "record"},
 		{ID: "fetch-a", Type: "record", DependsOn: []string{"validate"}},
 		{ID: "fetch-b", Type: "record", DependsOn: []string{"validate"}},
 		{ID: "analyze", Type: "record", DependsOn: []string{"fetch-a", "fetch-b"}},
 	}}
 
-	executionID, err := NewScheduler(registry, repo).Execute(context.Background(), def, json.RawMessage(`{"service":"checkout"}`))
+	executionID, err := engine.NewScheduler(registry, repo).Execute(context.Background(), def, json.RawMessage(`{"service":"checkout"}`))
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -94,8 +97,8 @@ func TestSchedulerExecutesDAGSequentiallyAndPersistsHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if execution.Status != ExecutionCompleted {
-		t.Fatalf("execution status = %q, want %q", execution.Status, ExecutionCompleted)
+	if execution.Status != engine.ExecutionCompleted {
+		t.Fatalf("execution status = %q, want %q", execution.Status, engine.ExecutionCompleted)
 	}
 	steps, err := repo.ListStepExecutions(context.Background(), executionID)
 	if err != nil {
@@ -105,32 +108,32 @@ func TestSchedulerExecutesDAGSequentiallyAndPersistsHistory(t *testing.T) {
 		t.Fatalf("steps = %d, want 4", len(steps))
 	}
 	for _, step := range steps {
-		if step.Status != StepCompleted {
+		if step.Status != engine.StepCompleted {
 			t.Fatalf("step %q status = %q", step.StepID, step.Status)
 		}
 		attempts, err := repo.ListStepAttempts(context.Background(), step.ID)
 		if err != nil {
 		t.Fatal(err)
 	}
-		if len(attempts) != 1 || attempts[0].Status != StepAttemptCompleted {
+		if len(attempts) != 1 || attempts[0].Status != engine.StepAttemptCompleted {
 			t.Fatalf("step %q attempts = %+v, want one completed attempt", step.StepID, attempts)
 		}
 	}
 }
 
 func TestSchedulerFailsFastAndPersistsFailure(t *testing.T) {
-	registry := NewRegistry()
+	registry := engine.NewRegistry()
 	if err := registry.Register("fail", failingStep{}); err != nil {
 		t.Fatal(err)
 	}
-	repo := NewMemoryExecutionRepository()
+	repo := memory.NewExecutionRepository()
 
-	def := WorkflowDefinition{ID: "wf", Version: 1, Steps: []StepDefinition{
+	def := engine.WorkflowDefinition{ID: "wf", Version: 1, Steps: []engine.StepDefinition{
 		{ID: "bad", Type: "fail"},
 		{ID: "later", Type: "fail", DependsOn: []string{"bad"}},
 	}}
 
-	executionID, err := NewScheduler(registry, repo).Execute(context.Background(), def, nil)
+	executionID, err := engine.NewScheduler(registry, repo).Execute(context.Background(), def, nil)
 	if err == nil {
 		t.Fatal("Execute() error = nil, want failure")
 	}
@@ -139,8 +142,8 @@ func TestSchedulerFailsFastAndPersistsFailure(t *testing.T) {
 	if getErr != nil {
 		t.Fatal(getErr)
 	}
-	if execution.Status != ExecutionFailed {
-		t.Fatalf("status = %q, want %q", execution.Status, ExecutionFailed)
+	if execution.Status != engine.ExecutionFailed {
+		t.Fatalf("status = %q, want %q", execution.Status, engine.ExecutionFailed)
 	}
 	if execution.Error == nil || execution.Error.Message != "boom" {
 		t.Fatalf("execution error = %+v", execution.Error)
@@ -150,34 +153,34 @@ func TestSchedulerFailsFastAndPersistsFailure(t *testing.T) {
 	if listErr != nil {
 		t.Fatal(listErr)
 	}
-	byStep := make(map[string]StepExecution)
+	byStep := make(map[string]engine.StepExecution)
 	for _, step := range steps {
 		byStep[step.StepID] = step
 	}
-	if byStep["bad"].Status != StepFailed {
+	if byStep["bad"].Status != engine.StepFailed {
 		t.Fatalf("bad status = %q", byStep["bad"].Status)
 	}
-	if byStep["later"].Status != StepPending {
+	if byStep["later"].Status != engine.StepPending {
 		t.Fatalf("later status = %q", byStep["later"].Status)
 	}
 }
 
 func TestSchedulerRetriesConfiguredStepAndPersistsAttempts(t *testing.T) {
 	implementation := &retryThenSucceedStep{}
-	registry := NewRegistry()
+	registry := engine.NewRegistry()
 	if err := registry.Register("retry", implementation); err != nil {
 		t.Fatal(err)
 	}
-	repo := NewMemoryExecutionRepository()
+	repo := memory.NewExecutionRepository()
 
-	def := WorkflowDefinition{
+	def := engine.WorkflowDefinition{
 		ID:      "wf",
 		Version: 1,
-		Steps: []StepDefinition{
+		Steps: []engine.StepDefinition{
 			{
 				ID:   "retry-me",
 				Type: "retry",
-				Retry: RetryPolicy{
+				Retry: engine.RetryPolicy{
 					MaxAttempts: 3,
 					BaseDelay:   time.Nanosecond,
 					MaxDelay:    time.Nanosecond,
@@ -186,7 +189,7 @@ func TestSchedulerRetriesConfiguredStepAndPersistsAttempts(t *testing.T) {
 		},
 	}
 
-	executionID, err := NewScheduler(registry, repo).Execute(context.Background(), def, nil)
+	executionID, err := engine.NewScheduler(registry, repo).Execute(context.Background(), def, nil)
 	if err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
@@ -209,10 +212,10 @@ func TestSchedulerRetriesConfiguredStepAndPersistsAttempts(t *testing.T) {
 	if len(attempts) != 3 {
 		t.Fatalf("persisted attempts = %d, want 3", len(attempts))
 	}
-	if attempts[0].Status != StepAttemptFailed || attempts[1].Status != StepAttemptFailed || attempts[2].Status != StepAttemptCompleted {
+	if attempts[0].Status != engine.StepAttemptFailed || attempts[1].Status != engine.StepAttemptFailed || attempts[2].Status != engine.StepAttemptCompleted {
 		t.Fatalf("attempt statuses = [%q %q %q], want [failed failed completed]", attempts[0].Status, attempts[1].Status, attempts[2].Status)
 	}
-	if attempts[0].Error == nil || attempts[0].Error.Kind != ErrorRetryable {
+	if attempts[0].Error == nil || attempts[0].Error.Kind != engine.ErrorRetryable {
 		t.Fatalf("first attempt error = %+v, want retryable", attempts[0].Error)
 	}
 
@@ -222,7 +225,7 @@ func TestSchedulerRetriesConfiguredStepAndPersistsAttempts(t *testing.T) {
 	}
 	var retryScheduled int
 	for _, event := range events {
-		if event.Type == EventStepRetryScheduled {
+		if event.Type == engine.EventStepRetryScheduled {
 			retryScheduled++
 		}
 	}
@@ -233,19 +236,19 @@ func TestSchedulerRetriesConfiguredStepAndPersistsAttempts(t *testing.T) {
 
 func TestSchedulerDoesNotRetryWithoutPolicy(t *testing.T) {
 	implementation := &retryThenSucceedStep{}
-	registry := NewRegistry()
+	registry := engine.NewRegistry()
 	if err := registry.Register("retry", implementation); err != nil {
 		t.Fatal(err)
 	}
-	repo := NewMemoryExecutionRepository()
+	repo := memory.NewExecutionRepository()
 
-	def := WorkflowDefinition{
+	def := engine.WorkflowDefinition{
 		ID:      "wf",
 		Version: 1,
-		Steps:   []StepDefinition{{ID: "once", Type: "retry"}},
+		Steps:   []engine.StepDefinition{{ID: "once", Type: "retry"}},
 	}
 
-	_, err := NewScheduler(registry, repo).Execute(context.Background(), def, nil)
+	_, err := engine.NewScheduler(registry, repo).Execute(context.Background(), def, nil)
 	if err == nil {
 		t.Fatal("Execute() error = nil, want failure")
 	}
@@ -256,25 +259,25 @@ func TestSchedulerDoesNotRetryWithoutPolicy(t *testing.T) {
 
 func TestSchedulerPermanentErrorStopsConfiguredRetries(t *testing.T) {
 	implementation := &permanentFailingStep{}
-	registry := NewRegistry()
+	registry := engine.NewRegistry()
 	if err := registry.Register("permanent", implementation); err != nil {
 		t.Fatal(err)
 	}
-	repo := NewMemoryExecutionRepository()
+	repo := memory.NewExecutionRepository()
 
-	def := WorkflowDefinition{
+	def := engine.WorkflowDefinition{
 		ID:      "wf",
 		Version: 1,
-		Steps: []StepDefinition{
+		Steps: []engine.StepDefinition{
 			{
 				ID:    "permanent",
 				Type:  "permanent",
-				Retry: RetryPolicy{MaxAttempts: 3},
+				Retry: engine.RetryPolicy{MaxAttempts: 3},
 			},
 		},
 	}
 
-	_, err := NewScheduler(registry, repo).Execute(context.Background(), def, nil)
+	_, err := engine.NewScheduler(registry, repo).Execute(context.Background(), def, nil)
 	if err == nil {
 		t.Fatal("Execute() error = nil, want failure")
 	}
@@ -285,25 +288,25 @@ func TestSchedulerPermanentErrorStopsConfiguredRetries(t *testing.T) {
 
 func TestSchedulerUsesStepRetryClassifier(t *testing.T) {
 	implementation := &classifyingStep{retry: false}
-	registry := NewRegistry()
+	registry := engine.NewRegistry()
 	if err := registry.Register("classified", implementation); err != nil {
 		t.Fatal(err)
 	}
-	repo := NewMemoryExecutionRepository()
+	repo := memory.NewExecutionRepository()
 
-	def := WorkflowDefinition{
+	def := engine.WorkflowDefinition{
 		ID:      "wf",
 		Version: 1,
-		Steps: []StepDefinition{
+		Steps: []engine.StepDefinition{
 			{
 				ID:    "classified",
 				Type:  "classified",
-				Retry: RetryPolicy{MaxAttempts: 3},
+				Retry: engine.RetryPolicy{MaxAttempts: 3},
 			},
 		},
 	}
 
-	_, err := NewScheduler(registry, repo).Execute(context.Background(), def, nil)
+	_, err := engine.NewScheduler(registry, repo).Execute(context.Background(), def, nil)
 	if err == nil {
 		t.Fatal("Execute() error = nil, want failure")
 	}

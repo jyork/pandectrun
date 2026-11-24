@@ -290,7 +290,7 @@ Execution relations may be added to this repository when they become executable 
 
 ## PostgreSQL schema and crash recovery
 
-The first PostgreSQL migration lives in [`migrations/`](../migrations/README.md)
+The first PostgreSQL migration lives in [`migrations/postgres/`](../migrations/postgres/README.md)
 and covers executions, step executions, attempts, and append-only lifecycle
 events. The repository must commit each state transition and its event in one
 transaction; schema constraints alone cannot enforce transition ordering or
@@ -336,28 +336,38 @@ Cancellation can race with completion or failure. The scheduler must classify th
 
 A running `StepAttempt` that stops because cancellation takes effect should become `cancelled`. Pending steps that will no longer execute because cancellation took effect should also become `cancelled`, not `skipped`.
 
+## Persistence package boundaries
+
+The `internal/engine` package owns the runtime models and `ExecutionRepository`
+interface. Concrete repositories live in `internal/persistence/<backend>` and
+import `engine`; the engine does not import persistence adapters. The application
+selects and injects an adapter. PostgreSQL is the primary durable backend;
+additional DBMS adapters may implement the same contract using their own drivers,
+SQL dialects, and migrations under `migrations/<backend>/`.
+
 ## In-memory repository
 
 The first implementation should be concurrency-safe even though the initial scheduler is sequential.
 
-A likely shape is:
+The implementation lives in `internal/persistence/memory` and has this shape:
 
 ```go
-type MemoryExecutionRepository struct {
+type ExecutionRepository struct {
     mu sync.RWMutex
 
-    executions map[ExecutionID]Execution
-    steps      map[StepExecutionID]StepExecution
-    attempts   map[StepAttemptID]StepAttempt
-    events     map[ExecutionID][]ExecutionEvent
-    relations  []ExecutionRelation
+    executions map[engine.ExecutionID]engine.Execution
+    steps      map[engine.StepExecutionID]engine.StepExecution
+    attempts   map[engine.StepAttemptID]engine.StepAttempt
+    events     map[engine.ExecutionID][]engine.ExecutionEvent
+    nextStep    int64
+    nextAttempt int64
 }
 ```
 
 The implementation should satisfy the repository interface explicitly:
 
 ```go
-var _ ExecutionRepository = (*MemoryExecutionRepository)(nil)
+var _ engine.ExecutionRepository = (*ExecutionRepository)(nil)
 ```
 
 Tests should exercise repository semantics, not merely map storage. Important cases include legal and illegal state transitions, repository-generated identities, repository-owned lifecycle timestamps, immutable completed output, retry attempt history and explicit attempt status, event ordering, persisted execution errors, cancellation idempotency, filtered execution listing by workflow and status, and races represented by transitions from `cancel_requested` to each permitted terminal state.
