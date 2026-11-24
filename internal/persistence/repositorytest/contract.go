@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"regexp"
 	"reflect"
+	"regexp"
 	"sync"
 	"testing"
 
@@ -60,20 +60,30 @@ func testExecutionLifecycleAndEvents(t *testing.T, repo engine.ExecutionReposito
 	ctx := context.Background()
 
 	id, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "wf", WorkflowVersion: 2, Input: json.RawMessage(`{"x":1}`)})
-	if err != nil { t.Fatal(err) }
-	if err := repo.StartExecution(ctx, id); err != nil { t.Fatal(err) }
-	if err := repo.CompleteExecution(ctx, id, json.RawMessage(`{"ok":true}`)); err != nil { t.Fatal(err) }
+	requireNoError(t, err)
+	requireNoError(t, repo.StartExecution(ctx, id))
+	requireNoError(t, repo.CompleteExecution(ctx, id, json.RawMessage(`{"ok":true}`)))
 
 	execution, err := repo.GetExecution(ctx, id)
-	if err != nil { t.Fatal(err) }
-	if execution.Status != engine.ExecutionCompleted { t.Fatalf("status = %q", execution.Status) }
-	if execution.StartedAt == nil || execution.CompletedAt == nil { t.Fatal("lifecycle timestamps were not persisted") }
+	requireNoError(t, err)
+	if execution.Status != engine.ExecutionCompleted {
+		t.Fatalf("status = %q", execution.Status)
+	}
+	if execution.StartedAt == nil || execution.CompletedAt == nil {
+		t.Fatal("lifecycle timestamps were not persisted")
+	}
 
 	events, err := repo.ListEvents(ctx, id)
-	if err != nil { t.Fatal(err) }
+	requireNoError(t, err)
 	want := []engine.ExecutionEventType{engine.EventExecutionCreated, engine.EventExecutionStarted, engine.EventExecutionCompleted}
-	if len(events) != len(want) { t.Fatalf("events = %d, want %d", len(events), len(want)) }
-	for i := range want { if events[i].Type != want[i] { t.Fatalf("event[%d] = %q, want %q", i, events[i].Type, want[i]) } }
+	if len(events) != len(want) {
+		t.Fatalf("events = %d, want %d", len(events), len(want))
+	}
+	for i := range want {
+		if events[i].Type != want[i] {
+			t.Fatalf("event[%d] = %q, want %q", i, events[i].Type, want[i])
+		}
+	}
 
 	if err := repo.FailExecution(ctx, id, engine.ExecutionError{Kind: engine.ErrorTerminal, Message: "late"}); !errors.Is(err, engine.ErrInvalidTransition) {
 		t.Fatalf("late failure error = %v, want ErrInvalidTransition", err)
@@ -81,41 +91,85 @@ func testExecutionLifecycleAndEvents(t *testing.T, repo engine.ExecutionReposito
 }
 
 func testCancellationIsIdempotent(t *testing.T, repo engine.ExecutionRepository) {
-	ctx := context.Background();
-	id, _ := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID:"wf", WorkflowVersion:1})
-	if err := repo.StartExecution(ctx,id); err != nil { t.Fatal(err) }
-	if err := repo.RequestCancellation(ctx,id); err != nil { t.Fatal(err) }
-	if err := repo.RequestCancellation(ctx,id); err != nil { t.Fatal(err) }
-	if err := repo.CompleteCancellation(ctx,id); err != nil { t.Fatal(err) }
-	if err := repo.CompleteCancellation(ctx,id); err != nil { t.Fatal(err) }
-	e, _ := repo.GetExecution(ctx,id); if e.Status != engine.ExecutionCancelled { t.Fatalf("status = %q",e.Status) }
+	ctx := context.Background()
+	id, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "wf", WorkflowVersion: 1})
+	requireNoError(t, err)
+	requireNoError(t, repo.StartExecution(ctx, id))
+	requireNoError(t, repo.RequestCancellation(ctx, id))
+	requireNoError(t, repo.RequestCancellation(ctx, id))
+	requireNoError(t, repo.CompleteCancellation(ctx, id))
+	requireNoError(t, repo.CompleteCancellation(ctx, id))
+	e, err := repo.GetExecution(ctx, id)
+	requireNoError(t, err)
+	if e.Status != engine.ExecutionCancelled {
+		t.Fatalf("status = %q", e.Status)
+	}
+	events, err := repo.ListEvents(ctx, id)
+	requireNoError(t, err)
+	if len(events) != 4 || events[2].Type != engine.EventExecutionCancelRequested || events[3].Type != engine.EventExecutionCancelled {
+		t.Fatalf("unexpected cancellation events: %+v", events)
+	}
 }
 
 func testListExecutionsFiltersAndLimits(t *testing.T, repo engine.ExecutionRepository) {
-	ctx := context.Background();
-	one,_ := repo.CreateExecution(ctx,engine.NewExecution{WorkflowID:"one",WorkflowVersion:1}); _ = repo.StartExecution(ctx,one)
-	two,_ := repo.CreateExecution(ctx,engine.NewExecution{WorkflowID:"two",WorkflowVersion:1}); _ = repo.StartExecution(ctx,two); _ = repo.FailExecution(ctx,two,engine.ExecutionError{Kind:engine.ErrorTerminal,Message:"boom"})
-	three,_ := repo.CreateExecution(ctx,engine.NewExecution{WorkflowID:"one",WorkflowVersion:2}); _ = repo.StartExecution(ctx,three)
+	ctx := context.Background()
+	one, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "one", WorkflowVersion: 1})
+	requireNoError(t, err)
+	requireNoError(t, repo.StartExecution(ctx, one))
+	two, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "two", WorkflowVersion: 1})
+	requireNoError(t, err)
+	requireNoError(t, repo.StartExecution(ctx, two))
+	requireNoError(t, repo.FailExecution(ctx, two, engine.ExecutionError{Kind: engine.ErrorTerminal, Message: "boom"}))
+	three, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "one", WorkflowVersion: 2})
+	requireNoError(t, err)
+	requireNoError(t, repo.StartExecution(ctx, three))
 
-	running,err := repo.ListExecutions(ctx,engine.ExecutionQuery{Status:[]engine.ExecutionStatus{engine.ExecutionRunning}}); if err != nil { t.Fatal(err) }
-	if len(running)!=2 { t.Fatalf("running executions = %d, want 2",len(running)) }
-	workflowOne,err := repo.ListExecutions(ctx,engine.ExecutionQuery{WorkflowID:"one",Limit:1}); if err != nil { t.Fatal(err) }
-	if len(workflowOne)!=1 || workflowOne[0].WorkflowID!="one" { t.Fatalf("workflow one query = %+v",workflowOne) }
+	running, err := repo.ListExecutions(ctx, engine.ExecutionQuery{Status: []engine.ExecutionStatus{engine.ExecutionRunning}})
+	requireNoError(t, err)
+	if len(running) != 2 || running[0].ID != one || running[1].ID != three {
+		// Equal timestamps may be ordered by UUID rather than insertion order.
+		if len(running) != 2 || running[0].ID != three || running[1].ID != one {
+			t.Fatalf("unexpected running executions: %+v", running)
+		}
+	}
+	workflowOne, err := repo.ListExecutions(ctx, engine.ExecutionQuery{WorkflowID: "one", Limit: 1})
+	requireNoError(t, err)
+	if len(workflowOne) != 1 || workflowOne[0].WorkflowID != "one" {
+		t.Fatalf("workflow one query = %+v", workflowOne)
+	}
 }
 
 func testCompletedStepOutputIsImmutable(t *testing.T, repo engine.ExecutionRepository) {
-	ctx:=context.Background(); executionID,_:=repo.CreateExecution(ctx,engine.NewExecution{WorkflowID:"wf",WorkflowVersion:1}); _=repo.StartExecution(ctx,executionID)
-	stepID,_:=repo.CreateStepExecution(ctx,engine.NewStepExecution{ExecutionID:executionID,StepID:"s"}); _=repo.StartStep(ctx,stepID)
-	attemptID,_:=repo.CreateStepAttempt(ctx,engine.NewStepAttempt{StepExecutionID:stepID,Attempt:1}); _=repo.CompleteStepAttempt(ctx,attemptID)
-	output:=json.RawMessage(`{"value":1}`); if err:=repo.CompleteStep(ctx,stepID,output); err!=nil { t.Fatal(err) }
-	output[10]='9'
-	step,_:=repo.GetStepExecution(ctx,stepID); if !equalJSON(step.Output, json.RawMessage(`{"value":1}`)) { t.Fatalf("stored output = %s",step.Output) }
-	if err:=repo.CompleteStep(ctx,stepID,json.RawMessage(`{"value":2}`)); !errors.Is(err,engine.ErrInvalidTransition) { t.Fatalf("second completion error = %v",err) }
+	ctx := context.Background()
+	id, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "wf", WorkflowVersion: 1})
+	requireNoError(t, err)
+	requireNoError(t, repo.StartExecution(ctx, id))
+	stepID, err := repo.CreateStepExecution(ctx, engine.NewStepExecution{ExecutionID: id, StepID: "s"})
+	requireNoError(t, err)
+	requireNoError(t, repo.StartStep(ctx, stepID))
+	attemptID, err := repo.CreateStepAttempt(ctx, engine.NewStepAttempt{StepExecutionID: stepID, Attempt: 1})
+	requireNoError(t, err)
+	requireNoError(t, repo.CompleteStepAttempt(ctx, attemptID))
+	output := json.RawMessage(`{"value":1}`)
+	requireNoError(t, repo.CompleteStep(ctx, stepID, output))
+	output[9] = '9'
+	step, err := repo.GetStepExecution(ctx, stepID)
+	requireNoError(t, err)
+	if !equalJSON(step.Output, json.RawMessage(`{"value":1}`)) {
+		t.Fatalf("stored output = %s", step.Output)
+	}
+	if err := repo.CompleteStep(ctx, stepID, json.RawMessage(`{"value":2}`)); !errors.Is(err, engine.ErrInvalidTransition) {
+		t.Fatalf("second completion error = %v", err)
+	}
+	step, err = repo.GetStepExecution(ctx, stepID)
+	requireNoError(t, err)
+	if !equalJSON(step.Output, json.RawMessage(`{"value":1}`)) {
+		t.Fatalf("output changed after rejected transition: %s", step.Output)
+	}
 }
 
 func testIDTypes(t *testing.T, repo engine.ExecutionRepository) {
 	ctx := context.Background()
-
 
 	executionID, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "wf", WorkflowVersion: 1})
 	if err != nil {
