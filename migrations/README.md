@@ -2,6 +2,39 @@
 
 This directory contains ordered SQL migrations for the execution repository.
 
+## Local development with Docker Compose
+
+From the repository root, with Docker Desktop or Docker Engine running:
+
+```bash
+docker compose up -d --wait
+```
+
+The PostgreSQL 18 service listens on localhost port 5432 and stores data in a
+persistent Compose-managed volume. The development-only connection URL is:
+
+```text
+postgresql://pandectrun:pandectrun_dev@localhost:5432/pandectrun?sslmode=disable
+```
+
+If a standalone PostgreSQL container is already using port 5432, stop it first
+(e.g. `docker stop pandectrun-postgres`). Compose creates a separate volume;
+it does not import the standalone container's data.
+
+Apply the schema once and run the smoke test without installing psql locally:
+
+```bash
+docker compose exec -T postgres psql -U pandectrun -d pandectrun -v ON_ERROR_STOP=1 -1 < migrations/000001_execution_schema.up.sql
+docker compose exec -T postgres psql -U pandectrun -d pandectrun -v ON_ERROR_STOP=1 < migrations/test_execution_schema.sql
+```
+
+Stop and remove the service with `docker compose down`. The database volume
+is retained. To permanently delete the Compose-managed development database,
+use `docker compose down -v`.
+
+These credentials and settings are for local development only. Migrations
+are intentionally applied explicitly rather than automatically on startup.
+
 ## Applying migrations
 
 Version 1 is a single transactional migration. From the repository root:
