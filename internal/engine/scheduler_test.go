@@ -113,8 +113,8 @@ func TestSchedulerExecutesDAGSequentiallyAndPersistsHistory(t *testing.T) {
 		}
 		attempts, err := repo.ListStepAttempts(context.Background(), step.ID)
 		if err != nil {
-		t.Fatal(err)
-	}
+			t.Fatal(err)
+		}
 		if len(attempts) != 1 || attempts[0].Status != engine.StepAttemptCompleted {
 			t.Fatalf("step %q attempts = %+v, want one completed attempt", step.StepID, attempts)
 		}

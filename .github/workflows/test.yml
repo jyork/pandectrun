@@ -14,6 +14,21 @@ jobs:
     name: Go test
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: pandectrun
+          POSTGRES_PASSWORD: pandectrun_test
+          POSTGRES_DB: pandectrun_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pandectrun -d pandectrun_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -27,4 +42,5 @@ jobs:
       - name: Run tests with race detector
         env:
           CGO_ENABLED: "1"
+          PANDECTRUN_POSTGRES_TEST_DSN: postgresql://pandectrun:pandectrun_test@localhost:5432/pandectrun_test?sslmode=disable
         run: go test -race ./...
