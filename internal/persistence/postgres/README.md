@@ -31,3 +31,10 @@ implemented. State transitions lock the execution row before validation and
 write their events in the same transaction. SQL NULL and JSON null remain
 distinct. Step, attempt and public event retrieval methods are deferred; the
 adapter cannot yet be injected into the engine.
+
+Step execution operations are implemented. Mutations acquire the parent execution
+lock before the step lock, serializing event writes per execution. The existing
+schema enforces unique logical step IDs within an execution; duplicate inserts
+return a wrapped PostgreSQL unique-constraint error. The memory adapter does
+not yet enforce this constraint. Attempt persistence and public event retrieval
+remain outstanding.
