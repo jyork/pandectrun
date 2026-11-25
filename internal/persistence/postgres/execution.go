@@ -12,7 +12,7 @@ import (
 	"github.com/jyork/pandectrun/internal/engine"
 )
 
-const executionColumns = "id::text, workflow_id, workflow_version, status, input, output, error, created_at, started_at, completed_at"
+const executionColumns = "id::text, workflow_id, workflow_version, status, input::text, output::text, error::text, created_at, started_at, completed_at"
 
 // CreateExecution creates a pending execution, assigns its ID and creation time,
 // and records an execution.created event atomically.
@@ -28,7 +28,7 @@ func (r *ExecutionRepository) CreateExecution(ctx context.Context, in engine.New
 	err := r.withTransaction(ctx, func(tx pgx.Tx) error {
 		var created time.Time
 		err := tx.QueryRow(ctx, `INSERT INTO executions (id, workflow_id, workflow_version, input)
-			VALUES ($1, $2, $3, $4) RETURNING created_at`, string(id), in.WorkflowID, in.WorkflowVersion, in.Input).Scan(&created)
+			VALUES ($1::text::uuid, $2, $3, $4) RETURNING created_at`, string(id), in.WorkflowID, in.WorkflowVersion, in.Input).Scan(&created)
 		if err != nil {
 			return err
 		}
@@ -50,7 +50,7 @@ func (r *ExecutionRepository) CreateExecution(ctx context.Context, in engine.New
 //   - Execution: a detached copy of the persisted execution.
 //   - error: nil on success, or ErrNotFound when id does not exist.
 func (r *ExecutionRepository) GetExecution(ctx context.Context, id engine.ExecutionID) (engine.Execution, error) {
-	return scanExecution(r.pool.QueryRow(ctx, "SELECT "+executionColumns+" FROM executions WHERE id = $1", string(id)))
+	return scanExecution(r.pool.QueryRow(ctx, "SELECT "+executionColumns+" FROM executions WHERE id = $1::text::uuid", string(id)))
 }
 
 // ListExecutions returns executions matching q in deterministic creation order.
@@ -97,8 +97,8 @@ func (r *ExecutionRepository) ListExecutions(ctx context.Context, q engine.Execu
 func scanExecution(row pgx.Row) (engine.Execution, error) {
 	var e engine.Execution
 	var id, status string
-	var failure []byte
-	err := row.Scan(&id, &e.WorkflowID, &e.WorkflowVersion, &status, &e.Input, &e.Output, &failure, &e.CreatedAt, &e.StartedAt, &e.CompletedAt)
+	var input, output, failure *string
+	err := row.Scan(&id, &e.WorkflowID, &e.WorkflowVersion, &status, &input, &output, &failure, &e.CreatedAt, &e.StartedAt, &e.CompletedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return engine.Execution{}, engine.ErrNotFound
 	}
@@ -107,8 +107,14 @@ func scanExecution(row pgx.Row) (engine.Execution, error) {
 	}
 	e.ID = engine.ExecutionID(id)
 	e.Status = engine.ExecutionStatus(status)
+	if input != nil {
+		e.Input = json.RawMessage(*input)
+	}
+	if output != nil {
+		e.Output = json.RawMessage(*output)
+	}
 	if failure != nil {
-		if err := json.Unmarshal(failure, &e.Error); err != nil {
+		if err := json.Unmarshal([]byte(*failure), &e.Error); err != nil {
 			return engine.Execution{}, fmt.Errorf("decode execution error: %w", err)
 		}
 	}
@@ -189,7 +195,7 @@ func (r *ExecutionRepository) CompleteCancellation(ctx context.Context, id engin
 func (r *ExecutionRepository) transitionExecution(ctx context.Context, id engine.ExecutionID, target engine.ExecutionStatus, output json.RawMessage, failure *engine.ExecutionError) error {
 	return r.withTransaction(ctx, func(tx pgx.Tx) error {
 		var current string
-		err := tx.QueryRow(ctx, "SELECT status FROM executions WHERE id = $1 FOR UPDATE", string(id)).Scan(&current)
+		err := tx.QueryRow(ctx, "SELECT status FROM executions WHERE id = $1::text::uuid FOR UPDATE", string(id)).Scan(&current)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return engine.ErrNotFound
 		}
@@ -238,9 +244,9 @@ func (r *ExecutionRepository) transitionExecution(ctx context.Context, id engine
 			}
 		}
 		_, err = tx.Exec(ctx, `UPDATE executions SET status = $2,
-			started_at = CASE WHEN $2 = 'running' THEN $3 ELSE started_at END,
+			started_at = CASE WHEN $2 = 'running' THEN $3::timestamptz ELSE started_at END,
 			completed_at = CASE WHEN $2 IN ('completed', 'failed', 'cancelled') THEN $3 ELSE completed_at END,
-			output = $4, error = $5 WHERE id = $1`, string(id), string(target), now, output, encoded)
+			output = $4, error = $5 WHERE id = $1::text::uuid`, string(id), string(target), now, output, encoded)
 		if err != nil {
 			return err
 		}
@@ -251,6 +257,6 @@ func (r *ExecutionRepository) transitionExecution(ctx context.Context, id engine
 // appendExecutionEvent inserts an execution-scoped event within the caller's transaction.
 func appendExecutionEvent(ctx context.Context, tx pgx.Tx, id engine.ExecutionID, event engine.ExecutionEventType, created time.Time) error {
 	_, err := tx.Exec(ctx, `INSERT INTO execution_events (execution_id, type, created_at)
-		VALUES ($1, $2, $3)`, string(id), string(event), created)
+		VALUES ($1::text::uuid, $2, $3)`, string(id), string(event), created)
 	return err
 }
