@@ -11,8 +11,6 @@ import (
 	"github.com/jyork/pandectrun/internal/engine"
 )
 
-var _ engine.ExecutionRepository = (*ExecutionRepository)(nil)
-
 // CreateStepAttempt creates a running attempt for a running step execution,
 // assigns its ID and start time, and emits step.attempt_started atomically.
 //
