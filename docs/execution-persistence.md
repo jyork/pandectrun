@@ -372,6 +372,18 @@ var _ engine.ExecutionRepository = (*ExecutionRepository)(nil)
 
 Tests should exercise repository semantics, not merely map storage. Important cases include legal and illegal state transitions, repository-generated identities, repository-owned lifecycle timestamps, immutable completed output, retry attempt history and explicit attempt status, event ordering, persisted execution errors, cancellation idempotency, filtered execution listing by workflow and status, and races represented by transitions from `cancel_requested` to each permitted terminal state.
 
+## Shared repository contract tests
+
+The `internal/persistence/repositorytest` package provides a reusable
+`Run(t, factory)` suite. Each subtest receives an empty, isolated repository
+from the factory, which can register resource cleanup with `t.Cleanup`.
+Every backend should invoke the suite from its own test package.
+
+The suite checks observable repository behavior rather than storage details.
+Numeric IDs need not start at one, and JSON is compared semantically rather
+than by serialized whitespace. Backend-specific transaction rollback,
+connection recovery, and database constraint tests remain separate.
+
 ## Scheduler integration
 
 Once the in-memory repository exists, the scheduler should no longer accept an externally supplied execution ID or remain the sole owner of runtime state. It should create the execution through the repository, receive the generated `ExecutionID`, and use that ID for subsequent step and attempt persistence.
