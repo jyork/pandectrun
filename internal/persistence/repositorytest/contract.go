@@ -32,7 +32,7 @@ func Run(t *testing.T, factory Factory) {
 
 	tests := []struct {
 		name string
-		run func(*testing.T, engine.ExecutionRepository)
+		run  func(*testing.T, engine.ExecutionRepository)
 	}{
 		{"ExecutionLifecycleAndEvents", testExecutionLifecycleAndEvents},
 		{"CancellationIsIdempotent", testCancellationIsIdempotent},

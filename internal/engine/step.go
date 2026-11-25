@@ -20,7 +20,6 @@ type StepResult struct {
 	Output json.RawMessage
 }
 
-
 // PermanentError marks an error as non-retryable. The scheduler fails the
 // logical step immediately even when its definition has a retry policy.
 type PermanentError struct {
