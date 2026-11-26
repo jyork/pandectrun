@@ -9,7 +9,6 @@ import (
 	"time"
 	"uuid"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jyork/pandectrun/internal/engine"
 )
 
@@ -131,8 +130,7 @@ func TestStepMissingRecordsAndDuplicate(t *testing.T) {
 	_, err = r.CreateStepExecution(ctx, in)
 	requireSuccess(t, err)
 	_, err = r.CreateStepExecution(ctx, in)
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+	if !errors.Is(err, engine.ErrAlreadyExists) {
 		t.Fatalf("duplicate step: %v", err)
 	}
 }

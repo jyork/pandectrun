@@ -42,6 +42,7 @@ func Run(t *testing.T, factory Factory) {
 		{"AttemptHistory", testAttemptHistory},
 		{"MissingRecords", testMissingRecords},
 		{"ConcurrentStart", testConcurrentStart},
+		{"CreationConstraints", testCreationConstraints},
 		{"CancellationRaceOutcomes", testCancellationRaceOutcomes},
 	}
 
@@ -369,5 +370,72 @@ func testCancellationRaceOutcomes(t *testing.T, repo engine.ExecutionRepository)
 		if execution.Status != status || execution.CompletedAt == nil {
 			t.Fatalf("execution = %+v, want terminal status %s", execution, status)
 		}
+	}
+}
+
+func testCreationConstraints(t *testing.T, repo engine.ExecutionRepository) {
+	ctx := context.Background()
+	for _, version := range []int{-1, 0} {
+		id, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "wf", WorkflowVersion: version})
+		if id != "" || !errors.Is(err, engine.ErrInvalidInput) {
+			t.Fatalf("invalid version: id=%s err=%v", id, err)
+		}
+	}
+	executions, err := repo.ListExecutions(ctx, engine.ExecutionQuery{})
+	requireNoError(t, err)
+	if len(executions) != 0 {
+		t.Fatal("invalid executions persisted")
+	}
+	parent, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "wf", WorkflowVersion: 1})
+	requireNoError(t, err)
+	requireNoError(t, repo.StartExecution(ctx, parent))
+	stepInput := engine.NewStepExecution{ExecutionID: parent, StepID: "step"}
+	step, err := repo.CreateStepExecution(ctx, stepInput)
+	requireNoError(t, err)
+	if id, err := repo.CreateStepExecution(ctx, stepInput); id != 0 || !errors.Is(err, engine.ErrAlreadyExists) {
+		t.Fatalf("duplicate step: id=%d err=%v", id, err)
+	}
+	requireNoError(t, repo.StartStep(ctx, step))
+	for _, number := range []uint{0, 2147483648} {
+		id, err := repo.CreateStepAttempt(ctx, engine.NewStepAttempt{StepExecutionID: step, Attempt: number})
+		if id != 0 || !errors.Is(err, engine.ErrInvalidInput) {
+			t.Fatalf("invalid attempt: id=%d err=%v", id, err)
+		}
+	}
+	before, err := repo.ListEvents(ctx, parent)
+	requireNoError(t, err)
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			<-start
+			_, err := repo.CreateStepAttempt(ctx, engine.NewStepAttempt{StepExecutionID: step, Attempt: 1})
+			results <- err
+		}()
+	}
+	close(start)
+	success := 0
+	for i := 0; i < workers; i++ {
+		err := <-results
+		if err == nil {
+			success++
+		} else if !errors.Is(err, engine.ErrAlreadyExists) {
+			t.Errorf("unexpected attempt creation error: %v", err)
+		}
+	}
+	if success != 1 {
+		t.Fatalf("successful attempts = %d, want 1", success)
+	}
+	attempts, err := repo.ListStepAttempts(ctx, step)
+	requireNoError(t, err)
+	steps, err := repo.ListStepExecutions(ctx, parent)
+	requireNoError(t, err)
+	events, err := repo.ListEvents(ctx, parent)
+	requireNoError(t, err)
+	if len(steps) != 1 || len(attempts) != 1 || len(events) != len(before)+1 ||
+		!reflect.DeepEqual(events[:len(before)], before) ||
+		events[len(before)].Type != engine.EventStepAttemptStarted {
+		t.Fatal("unexpected persisted state or event history")
 	}
 }

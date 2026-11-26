@@ -8,6 +8,8 @@ import (
 )
 
 var (
+	ErrAlreadyExists     = errors.New("already exists")
+	ErrInvalidInput      = errors.New("invalid input")
 	ErrNotFound          = errors.New("not found")
 	ErrInvalidTransition = errors.New("invalid lifecycle transition")
 )
@@ -44,6 +46,10 @@ type ExecutionEvent struct {
 // ExecutionRepository persists execution, step, attempt, and event state through
 // lifecycle-oriented operations. Implementations own runtime IDs (UUID execution IDs and integer step/attempt IDs) and lifecycle
 // timestamps and must keep each state transition and its corresponding event atomic.
+// Workflow versions and attempt numbers must be positive and fit a signed
+// 32-bit integer. Logical step IDs are unique within an execution and attempt
+// numbers are unique within a step. Invalid numbers return ErrInvalidInput;
+// duplicate logical keys return ErrAlreadyExists. Rejected creates persist no state or events.
 type ExecutionRepository interface {
 	CreateExecution(context.Context, NewExecution) (ExecutionID, error)
 	GetExecution(context.Context, ExecutionID) (Execution, error)
