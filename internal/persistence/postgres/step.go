@@ -28,8 +28,12 @@ func (r *ExecutionRepository) CreateStepExecution(ctx context.Context, in engine
 		if err := lockExecution(ctx, tx, in.ExecutionID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `INSERT INTO step_executions (execution_id, step_id)
-			VALUES ($1::text::uuid, $2) RETURNING id`, string(in.ExecutionID), in.StepID).Scan(&id)
+		err := tx.QueryRow(ctx, `INSERT INTO step_executions (execution_id, step_id)
+			VALUES ($1::text::uuid, $2) ON CONFLICT (execution_id, step_id) DO NOTHING RETURNING id`, string(in.ExecutionID), in.StepID).Scan(&id)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return engine.ErrAlreadyExists
+		}
+		return err
 	})
 	if err != nil {
 		return 0, err
