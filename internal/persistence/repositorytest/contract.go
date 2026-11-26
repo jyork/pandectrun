@@ -43,6 +43,7 @@ func Run(t *testing.T, factory Factory) {
 		{"MissingRecords", testMissingRecords},
 		{"ConcurrentStart", testConcurrentStart},
 		{"CreationConstraints", testCreationConstraints},
+		{"ConcurrentDuplicateStep", testConcurrentDuplicateStep},
 		{"CancellationRaceOutcomes", testCancellationRaceOutcomes},
 	}
 
@@ -437,5 +438,42 @@ func testCreationConstraints(t *testing.T, repo engine.ExecutionRepository) {
 		!reflect.DeepEqual(events[:len(before)], before) ||
 		events[len(before)].Type != engine.EventStepAttemptStarted {
 		t.Fatal("unexpected persisted state or event history")
+	}
+}
+
+func testConcurrentDuplicateStep(t *testing.T, repo engine.ExecutionRepository) {
+	ctx := context.Background()
+	parent, err := repo.CreateExecution(ctx, engine.NewExecution{WorkflowID: "wf", WorkflowVersion: 1})
+	requireNoError(t, err)
+	const workers = 8
+	start := make(chan struct{})
+	results := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			<-start
+			_, err := repo.CreateStepExecution(ctx, engine.NewStepExecution{ExecutionID: parent, StepID: "same"})
+			results <- err
+		}()
+	}
+	close(start)
+	success := 0
+	for i := 0; i < workers; i++ {
+		err := <-results
+		if err == nil {
+			success++
+		} else if !errors.Is(err, engine.ErrAlreadyExists) {
+			t.Errorf("unexpected creation error: %v", err)
+		}
+	}
+	if success != 1 {
+		t.Fatalf("successful creations = %d, want 1", success)
+	}
+	steps, err := repo.ListStepExecutions(ctx, parent)
+	requireNoError(t, err)
+	events, err := repo.ListEvents(ctx, parent)
+	requireNoError(t, err)
+	if len(steps) != 1 || steps[0].StepID != "same" ||
+		len(events) != 1 || events[0].Type != engine.EventExecutionCreated {
+		t.Fatalf("unexpected steps or events: %+v / %+v", steps, events)
 	}
 }
