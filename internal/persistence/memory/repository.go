@@ -55,6 +55,9 @@ func NewExecutionRepository() *ExecutionRepository {
 func (r *ExecutionRepository) CreateExecution(_ context.Context, in engine.NewExecution) (engine.ExecutionID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if in.WorkflowVersion <= 0 || in.WorkflowVersion > 2147483647 {
+		return "", engine.ErrInvalidInput
+	}
 	id := engine.ExecutionID(uuid.NewV4().String())
 	now := time.Now().UTC()
 	r.executions[id] = engine.Execution{ID: id, WorkflowID: in.WorkflowID, WorkflowVersion: in.WorkflowVersion, Status: engine.ExecutionPending, Input: cloneRawMessage(in.Input), CreatedAt: now}
@@ -285,6 +288,11 @@ func (r *ExecutionRepository) CreateStepExecution(_ context.Context, in engine.N
 	if _, ok := r.executions[in.ExecutionID]; !ok {
 		return 0, engine.ErrNotFound
 	}
+	for _, step := range r.steps {
+		if step.ExecutionID == in.ExecutionID && step.StepID == in.StepID {
+			return 0, engine.ErrAlreadyExists
+		}
+	}
 	r.nextStep++
 	id := engine.StepExecutionID(r.nextStep)
 	r.steps[id] = engine.StepExecution{ID: id, ExecutionID: in.ExecutionID, StepID: in.StepID, Status: engine.StepPending}
@@ -475,6 +483,14 @@ func (r *ExecutionRepository) CreateStepAttempt(_ context.Context, in engine.New
 	}
 	if s.Status != engine.StepRunning {
 		return 0, transitionError("step", string(s.Status), "create attempt")
+	}
+	if in.Attempt == 0 || in.Attempt > 2147483647 {
+		return 0, engine.ErrInvalidInput
+	}
+	for _, attempt := range r.attempts {
+		if attempt.StepExecutionID == in.StepExecutionID && attempt.Attempt == in.Attempt {
+			return 0, engine.ErrAlreadyExists
+		}
 	}
 	r.nextAttempt++
 	id := engine.StepAttemptID(r.nextAttempt)
