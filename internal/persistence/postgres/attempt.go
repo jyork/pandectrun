@@ -31,9 +31,15 @@ func (r *ExecutionRepository) CreateStepAttempt(ctx context.Context, in engine.N
 		if status != engine.StepRunning {
 			return fmt.Errorf("%w: step %s -> create attempt", engine.ErrInvalidTransition, status)
 		}
+		if in.Attempt == 0 || in.Attempt > 2147483647 {
+			return engine.ErrInvalidInput
+		}
 		var started time.Time
 		err = tx.QueryRow(ctx, `INSERT INTO step_attempts (step_execution_id, attempt, started_at)
-			VALUES ($1, $2, clock_timestamp()) RETURNING id, started_at`, int64(in.StepExecutionID), in.Attempt).Scan(&id, &started)
+			VALUES ($1, $2, clock_timestamp()) ON CONFLICT (step_execution_id, attempt) DO NOTHING RETURNING id, started_at`, int64(in.StepExecutionID), in.Attempt).Scan(&id, &started)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return engine.ErrAlreadyExists
+		}
 		if err != nil {
 			return err
 		}
