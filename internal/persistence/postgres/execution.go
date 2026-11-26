@@ -24,6 +24,9 @@ const executionColumns = "id::text, workflow_id, workflow_version, status, input
 //   - ExecutionID: the repository-assigned ID of the new execution.
 //   - error: nil on success; otherwise an error preventing creation.
 func (r *ExecutionRepository) CreateExecution(ctx context.Context, in engine.NewExecution) (engine.ExecutionID, error) {
+	if in.WorkflowVersion <= 0 || in.WorkflowVersion > 2147483647 {
+		return "", engine.ErrInvalidInput
+	}
 	id := engine.ExecutionID(uuid.NewV4().String())
 	err := r.withTransaction(ctx, func(tx pgx.Tx) error {
 		var created time.Time
