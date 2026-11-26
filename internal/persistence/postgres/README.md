@@ -1,7 +1,6 @@
 # PostgreSQL persistence
 
-This package is the foundation for the PostgreSQL execution repository. It
-does not yet implement the engine's complete repository interface. The caller
+This package implements the engine's complete execution repository interface. The caller
 owns the pgx connection pool. Transactions use READ COMMITTED isolation and
 do not automatically retry commit failures.
 
@@ -29,12 +28,21 @@ is required. Do not point the test DSN at a production database.
 Execution creation, retrieval, filtering and lifecycle transitions are now
 implemented. State transitions lock the execution row before validation and
 write their events in the same transaction. SQL NULL and JSON null remain
-distinct. Step, attempt and public event retrieval methods are deferred; the
-adapter cannot yet be injected into the engine.
+distinct.
 
 Step execution operations are implemented. Mutations acquire the parent execution
 lock before the step lock, serializing event writes per execution. The existing
 schema enforces unique logical step IDs within an execution; duplicate inserts
 return a wrapped PostgreSQL unique-constraint error. The memory adapter does
-not yet enforce this constraint. Attempt persistence and public event retrieval
-remain outstanding.
+not yet enforce this constraint.
+
+Attempt mutations acquire locks in execution, step, attempt order. Attempt
+creation and failure write their events atomically; completion and cancellation
+have no separate attempt event, matching the memory implementation. Retry
+scheduling records an event for a failed attempt. Event retrieval orders by
+identity ID and maps absent child references to zero values.
+
+The shared repository contract suite runs against isolated migrated schemas.
+The SQL schema also enforces positive, unique attempt numbers per step; memory
+currently does not enforce these constraints. Contract harmonization and
+application configuration remain separate work.
