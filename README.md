@@ -24,8 +24,8 @@ is a development-stage project, not yet a standalone workflow service.
 - PostgreSQL schema migrations, local Docker Compose environment, and shared repository contract tests.
 - GitHub Actions testing with the Go race detector and a PostgreSQL service.
 
-The PostgreSQL adapter implements all execution repository methods. Integration
-verification of the complete adapter is in progress. Automatic crash recovery,
+The PostgreSQL adapter implements all execution repository methods. Both adapters enforce the same creation constraints. Expanded scheduler and
+reconnection integration tests are included; verification of these tests is pending. Automatic crash recovery,
 distributed scheduling, persistent workflow definitions, HTTP APIs, and AI
 provider integrations are not yet implemented.
 
@@ -302,7 +302,8 @@ for additional details.
 - [x] Sequential workflow execution
 - [x] In-memory execution repository
 - [x] PostgreSQL repository implementation
-- [ ] Complete PostgreSQL integration verification and backend contract harmonization
+- [x] Backend contract harmonization
+- [ ] Complete PostgreSQL scheduler and reconnection integration verification
 - [ ] Application configuration and repository selection
 - [ ] REST API and persistent workflow definitions
 
