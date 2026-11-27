@@ -19,11 +19,18 @@ func (s integrationStep) Execute(ctx context.Context, in engine.StepInput) (engi
 	return s(ctx, in)
 }
 
+// TestSchedulerPostgresRetryAndReconnect verifies that the scheduler retries a
+// transient failure, passes workflow input and dependency output to the next
+// step, and completes the workflow using PostgreSQL. It then replaces the
+// connection pool and repository to verify that execution state, step outputs,
+// attempt history, and ordered lifecycle events remain persisted.
+// This tests client reconnection, not database restart or crash recovery.
 func TestSchedulerPostgresRetryAndReconnect(t *testing.T) {
 	r := migratedRepository(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Fail the first invocation and succeed on the second to exercise retry persistence.
 	registry := engine.NewRegistry()
 	calls := 0
 	requireSuccess(t, registry.Register("retry", integrationStep(func(context.Context, engine.StepInput) (engine.StepResult, error) {
@@ -33,6 +40,7 @@ func TestSchedulerPostgresRetryAndReconnect(t *testing.T) {
 		}
 		return engine.StepResult{Output: json.RawMessage("42")}, nil
 	})))
+	// Verify that the dependent step receives both the original input and prior output.
 	requireSuccess(t, registry.Register("consume", integrationStep(func(_ context.Context, in engine.StepInput) (engine.StepResult, error) {
 		if string(in.Context.Steps["first"]) != "42" || string(in.Context.Input) != "7" {
 			return engine.StepResult{}, errors.New("missing workflow context")
@@ -57,6 +65,7 @@ func TestSchedulerPostgresRetryAndReconnect(t *testing.T) {
 	t.Cleanup(pool.Close)
 	reopened := NewExecutionRepository(pool)
 
+	// Read persisted records through the replacement repository only.
 	execution, err := reopened.GetExecution(ctx, id)
 	requireSuccess(t, err)
 	if execution.Status != engine.ExecutionCompleted || string(execution.Input) != "7" ||
@@ -70,6 +79,7 @@ func TestSchedulerPostgresRetryAndReconnect(t *testing.T) {
 		string(steps[0].Output) != "42" || string(steps[1].Output) != "49" {
 		t.Fatalf("unexpected steps after reconnect: %+v", steps)
 	}
+	// Verify that failed and successful attempts remain distinct, including error classification.
 	first, err := reopened.ListStepAttempts(ctx, steps[0].ID)
 	requireSuccess(t, err)
 	second, err := reopened.ListStepAttempts(ctx, steps[1].ID)
@@ -81,6 +91,7 @@ func TestSchedulerPostgresRetryAndReconnect(t *testing.T) {
 		second[0].Status != engine.StepAttemptCompleted {
 		t.Fatalf("unexpected attempts after reconnect: %+v / %+v", first, second)
 	}
+	// Verify event ordering and the references linking events to their attempts.
 	events, err := reopened.ListEvents(ctx, id)
 	requireSuccess(t, err)
 	want := []engine.ExecutionEventType{
@@ -107,12 +118,17 @@ func TestSchedulerPostgresRetryAndReconnect(t *testing.T) {
 	}
 }
 
+// TestSchedulerPostgresTerminalFailure verifies that an explicitly permanent
+// step error suppresses configured retries, persists a terminal failure on the
+// attempt and execution, and prevents dependent steps from running. It also
+// verifies that the event history contains no retry-scheduled event.
 func TestSchedulerPostgresTerminalFailure(t *testing.T) {
 	r := migratedRepository(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	registry := engine.NewRegistry()
 	calls := 0
+	// Configure a permanent error even though the workflow allows three attempts.
 	requireSuccess(t, registry.Register("fail", integrationStep(func(context.Context, engine.StepInput) (engine.StepResult, error) {
 		calls++
 		return engine.StepResult{}, engine.Permanent(errors.New("terminal failure"))
@@ -145,12 +161,18 @@ func TestSchedulerPostgresTerminalFailure(t *testing.T) {
 		"step.attempt_started", "step.attempt_failed", "step.failed", "execution.failed")
 }
 
+// TestSchedulerPostgresCancellation verifies that a persisted cancellation
+// request is observed by the scheduler between steps. The active step finishes,
+// the pending dependent step is cancelled without an attempt, and the execution
+// reaches the cancelled state with the expected lifecycle events.
+// This does not test interruption of an actively executing step.
 func TestSchedulerPostgresCancellation(t *testing.T) {
 	r := migratedRepository(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	registry := engine.NewRegistry()
 	calls := 0
+	// Request cancellation from the active step without cancelling its Go context.
 	requireSuccess(t, registry.Register("cancel", integrationStep(func(ctx context.Context, in engine.StepInput) (engine.StepResult, error) {
 		calls++
 		if err := r.RequestCancellation(ctx, in.ExecutionID); err != nil {
@@ -176,6 +198,7 @@ func TestSchedulerPostgresCancellation(t *testing.T) {
 	if len(steps) != 2 || steps[0].Status != engine.StepCompleted || steps[1].Status != engine.StepCancelled {
 		t.Fatalf("unexpected steps: %+v", steps)
 	}
+	// The dependent step must never have started or created an attempt.
 	attempts, err := r.ListStepAttempts(ctx, steps[1].ID)
 	requireSuccess(t, err)
 	if len(attempts) != 0 {
