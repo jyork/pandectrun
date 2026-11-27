@@ -33,8 +33,7 @@ distinct.
 Step execution operations are implemented. Mutations acquire the parent execution
 lock before the step lock, serializing event writes per execution. The existing
 schema enforces unique logical step IDs within an execution; duplicate inserts
-return a wrapped PostgreSQL unique-constraint error. The memory adapter does
-not yet enforce this constraint.
+return engine.ErrAlreadyExists in both adapters.
 
 Attempt mutations acquire locks in execution, step, attempt order. Attempt
 creation and failure write their events atomically; completion and cancellation
@@ -43,6 +42,13 @@ scheduling records an event for a failed attempt. Event retrieval orders by
 identity ID and maps absent child references to zero values.
 
 The shared repository contract suite runs against isolated migrated schemas.
-The SQL schema also enforces positive, unique attempt numbers per step; memory
-currently does not enforce these constraints. Contract harmonization and
-application configuration remain separate work.
+Both adapters enforce positive signed 32-bit workflow versions and attempt
+numbers, and unique attempt numbers per step. Invalid numbers return
+engine.ErrInvalidInput; duplicate logical keys return engine.ErrAlreadyExists.
+
+Integration tests exercise the scheduler with PostgreSQL for retry followed by
+success, terminal failure, and persisted cancellation requests observed between
+steps. The successful workflow test replaces the connection pool and repository
+before reading execution state, step outputs, attempts, and events. This verifies
+persistence across client reconnection, not database restart or automatic crash
+recovery. Application configuration remains separate work.
